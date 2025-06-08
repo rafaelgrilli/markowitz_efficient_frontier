@@ -2,4 +2,6 @@ streamlit
 yahooquery
 pandas
 numpy
-matplotlib
+plotly
+scipy
+kaleido # Required for fig.to_image(format="png")
