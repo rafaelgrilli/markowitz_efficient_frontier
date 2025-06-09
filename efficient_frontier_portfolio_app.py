@@ -480,7 +480,7 @@ col1, col2 = st.columns([2, 1]) # Create two columns, col1 takes 2 parts, col2 t
 with col1:
     tickers_input = st.text_input(
         'Enter Ticker Symbols (comma-separated):', # Label for the text input
-        'itsa4.sa,bbas3.sa,goau4.sa,vale3.sa,embr3.sa',                          # Default value
+        'AAPL,MSFT,GOOG',                          # Default value
         help="Example: AAPL,MSFT,GOOG for Apple, Microsoft, Google. For Brazilian stocks such as bbas3, insert .sa in the end" # Help text on hover
     )
 with col2:
