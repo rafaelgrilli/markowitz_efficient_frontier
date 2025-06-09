@@ -3,14 +3,14 @@
 # ==============================================================================
 # 📦 Import necessary libraries
 # ==============================================================================
-import streamlit as st        # Streamlit library for building interactive web apps
-from yahooquery import Ticker # For fetching historical stock data from Yahoo Finance
-import pandas as pd           # For data manipulation and analysis, especially DataFrames
-import numpy as np            # For numerical operations, especially array manipulations
+import streamlit as st          # Streamlit library for building interactive web apps
+from yahooquery import Ticker   # For fetching historical stock data from Yahoo Finance
+import pandas as pd             # For data manipulation and analysis, especially DataFrames
+import numpy as np              # For numerical operations, especially array manipulations
 import plotly.graph_objects as go # Plotly for more customized graphs
-from datetime import date     # For handling date inputs
-import io                     # For handling in-memory binary streams (used for CSV download)
-import scipy.optimize as sco  # SciPy's optimization module for finding precise optimal portfolios
+from datetime import date       # For handling date inputs
+import io                       # For handling in-memory binary streams (used for CSV download)
+import scipy.optimize as sco    # SciPy's optimization module for finding precise optimal portfolios
 # Plotly's static image export requires kaleido, which is implicitly used by fig.to_image
 # import kaleido.scopes.plotly # Not directly imported, but needs to be installed
 
@@ -169,33 +169,11 @@ def validate_and_fetch_tickers(input_tickers_list):
     try:
         batch_ticker_obj = Ticker(input_tickers_list)
         price_data_check = batch_ticker_obj.price
-
-        # --- NEW DEBUG PRINT: Raw price_data_check ---
-        print(f"DEBUG: validate_and_fetch_tickers: Raw price_data_check received: {price_data_check}")
-        # --- END NEW DEBUG PRINT ---
-
         for ticker_symbol in input_tickers_list:
-            # --- NEW DEBUG PRINT: Checking individual ticker ---
-            print(f"DEBUG: Checking ticker: {ticker_symbol}")
-            # --- END NEW DEBUG PRINT ---
-
             if ticker_symbol in price_data_check and 'regularMarketPrice' in price_data_check[ticker_symbol]:
                 tickers.append(ticker_symbol)
-                # --- NEW DEBUG PRINT: Valid ticker ---
-                print(f"DEBUG: {ticker_symbol} is VALID (found regularMarketPrice).")
-                # --- END NEW DEBUG PRINT ---
             else:
                 invalid_tickers.append(ticker_symbol)
-                # --- NEW DEBUG PRINT: Invalid ticker details ---
-                # More detailed invalid reason
-                if ticker_symbol not in price_data_check:
-                    print(f"DEBUG: {ticker_symbol} is INVALID (not found in price_data_check keys).")
-                elif 'regularMarketPrice' not in price_data_check[ticker_symbol]:
-                    print(f"DEBUG: {ticker_symbol} is INVALID (missing 'regularMarketPrice' for found ticker). Data for {ticker_symbol}: {price_data_check.get(ticker_symbol)}")
-                else:
-                    print(f"DEBUG: {ticker_symbol} is INVALID (unknown reason).")
-                # --- END NEW DEBUG PRINT ---
-
         print(f"DEBUG: validate_and_fetch_tickers: Found {len(tickers)} valid and {len(invalid_tickers)} invalid tickers.") # Debug print
     except Exception as e:
         print(f"ERROR: validate_and_fetch_tickers: {e}") # Debug print for error
@@ -495,7 +473,7 @@ with col1:
     tickers_input = st.text_input(
         'Enter Ticker Symbols (comma-separated):', # Label for the text input
         'AAPL,MSFT,GOOG',                          # Default value
-        help="Example: AAPL,MSFT,GOOG for Apple, Microsoft, Google. For Brazilian stocks such as bbas3, insert .sa in the end" # Help text on hover
+        help="Example: AAPL,MSFT,GOOG for Apple, Microsoft, Google" # Help text on hover
     )
 with col2:
     risk_free_rate_input = st.number_input(
@@ -511,14 +489,14 @@ with col2:
 col3, col4 = st.columns(2) # Create two more columns for date inputs
 with col3:
     start_date_value = st.date_input(
-        'Start Date:',                # Label
-        date(2018, 1, 1),             # Default start date
+        'Start Date:',                   # Label
+        date(2018, 1, 1),                # Default start date
         help="Select the start date for historical data" # Help text
     )
 with col4:
     end_date_value = st.date_input(
-        'End Date:',                  # Label
-        date(2024, 12, 31),           # Default end date
+        'End Date:',                     # Label
+        date(2024, 12, 31),              # Default end date
         help="Select the end date for historical data" # Help text
     )
 
@@ -600,300 +578,472 @@ if run_button:
 
         # 1. Input Processing and Initial Validation
         input_tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+        print(f"DEBUG: Step 3: Input tickers parsed: {input_tickers}") # Debug print
 
         if not input_tickers:
-            st.error("❌ No ticker symbols entered. Please enter at least one ticker.")
-            st.session_state.simulation_run = False
-            results_container.empty()
-            print("DEBUG: No ticker symbols entered. Stopping execution flow.")
-            st.stop() # Stop further execution in this run if no tickers.
+            print("DEBUG: Step 3a: No tickers entered. Showing error.") # Debug print
+            results_container.error("❌ Please enter valid ticker symbols.")
+            st.stop()
 
+        # Basic validation for constraints
+        if global_min_weight > global_max_weight:
+            results_container.error("❌ Minimum weight per asset cannot be greater than maximum weight per asset.")
+            st.stop()
+
+        start_date_str = start_date_value.isoformat()
+        end_date_str = end_date_value.isoformat()
+        print(f"DEBUG: Step 3b: Date range selected: {start_date_str} to {end_date_str}") # Debug print
+
+        if start_date_value >= end_date_value:
+            print("DEBUG: Step 3c: Invalid date range. Showing error.") # Debug print
+            results_container.error("❌ Start Date must be before End Date.")
+            st.stop()
+
+        # Call cached ticker validation function
+        results_container.info("🔎 Validating ticker symbols...")
+        print("DEBUG: Step 4: Calling validate_and_fetch_tickers().") # Debug print
         valid_tickers, invalid_tickers = validate_and_fetch_tickers(input_tickers)
+        print(f"DEBUG: Step 4a: Ticker validation complete. Valid: {valid_tickers}, Invalid: {invalid_tickers}") # Debug print
 
         if invalid_tickers:
-            st.warning(f"⚠️ The following tickers could not be validated and will be ignored: **{', '.join(invalid_tickers)}**")
+            st.warning(f"⚠️ The following tickers were not found or could not be fetched: **{', '.join(invalid_tickers)}**. Proceeding with valid tickers only.")
 
         if not valid_tickers:
-            st.error("❌ No valid ticker symbols found after validation. Simulation cannot proceed.")
-            st.session_state.simulation_run = False
-            results_container.empty()
-            print("DEBUG: No valid ticker symbols found after validation. Stopping execution flow.")
-            st.stop() # Stop further execution in this run if no valid tickers.
+            print("DEBUG: Step 4b: No valid ticker symbols found after validation. Simulation cannot proceed.") # Debug print
+            results_container.error("❌ No valid ticker symbols found after validation. Simulation cannot proceed.")
+            st.stop()
 
-        # 2. Fetch Historical Data
-        start_date_str = start_date_value.strftime('%Y-%m-%d')
-        end_date_str = end_date_value.strftime('%Y-%m-%d')
-
-        # Use st.spinner for a better user experience during data fetching
-        with st.spinner("Fetching historical data... This may take a moment."):
-            prices_df, final_tickers = fetch_historical_data(valid_tickers, start_date_str, end_date_str)
-
-        # 3. Perform Optimizations
-        if prices_df is not None and not prices_df.empty and len(final_tickers) > 0:
-            optimization_results = perform_optimizations(
-                prices_df,
-                risk_free_rate_input,
-                num_portfolios_value,
-                global_min_weight,
-                global_max_weight
-            )
-            st.session_state.optimization_results = optimization_results
-            st.success("✅ Portfolio optimization completed successfully!")
-            print("DEBUG: Step 3: Optimization results stored in session state.") # Debug print
-        else:
-            st.error("❌ Could not proceed with optimization due to missing or insufficient data.")
-            st.session_state.simulation_run = False
-            print("DEBUG: Optimization skipped due to insufficient data.") # Debug print
-
-    # Ensure results_container is cleared or updated after spinner
-    results_container.empty() # Clear the "Starting simulation..." message if successful.
+        # Check for constraint feasibility with actual number of assets (more robust check with negative weights possible)
+        num_assets_after_validation = len(valid_tickers)
+        if num_assets_after_validation > 0:
+            # Check if it's possible for weights to sum to 1 given min/max constraints
+            # Sum of minimums should not exceed 1 (with a small tolerance)
+            if num_assets_after_validation * global_min_weight > 1.0 + 1e-6:
+                results_container.error(f"❌ Infeasible constraints: With {num_assets_after_validation} assets, a minimum weight of {global_min_weight*100:.1f}% per asset sums to over 100%. Reduce min weight or remove assets.")
+                st.stop()
+            # Sum of maximums should not be less than 1 (with a small tolerance)
+            if num_assets_after_validation * global_max_weight < 1.0 - 1e-6:
+                results_container.error(f"❌ Infeasible constraints: With {num_assets_after_validation} assets, a maximum weight of {global_max_weight*100:.1f}% per asset sums to less than 100%. Increase max weight or remove assets.")
+                st.stop()
 
 
-# ==============================================================================
-# 📈 Display Results (Only if simulation has been run and results exist)
-# This block displays the analysis and visualizations.
-# ==============================================================================
-if st.session_state.simulation_run and st.session_state.optimization_results:
-    results = st.session_state.optimization_results
-    tickers = results["tickers"]
-    num_assets = results["num_assets"]
+        # Call cached historical data fetch function
+        results_container.info("⏳ Fetching historical price data for valid tickers...")
+        print("DEBUG: Step 5: Calling fetch_historical_data().") # Debug print
+        prices, final_valid_tickers = fetch_historical_data(valid_tickers, start_date_str, end_date_str)
+        print(f"DEBUG: Step 5a: Historical data fetch complete. Final valid tickers: {final_valid_tickers}") # Debug print
 
-    st.subheader("Asset Statistics")
-    if num_assets > 0:
-        asset_stats_df = pd.DataFrame({
-            'Expected Annual Return': results["expected_returns"],
-            'Annual Volatility (Risk)': results["std_devs"]
+        # Call cached optimization function, passing constraints
+        results_container.info("⚙️ Performing Monte Carlo simulation and SciPy optimization...")
+        print("DEBUG: Step 6: Calling perform_optimizations().") # Debug print
+
+        # Perform optimizations and store results directly in session state
+        st.session_state.optimization_results = perform_optimizations(
+            prices, risk_free_rate_input, num_portfolios_value, global_min_weight, global_max_weight
+        )
+        print("DEBUG: Step 6a: Optimizations complete, results stored in session_state.")
+
+        # Rebuild the Plotly figure from scratch when run_button is clicked (fresh simulation)
+        print("DEBUG: Rebuilding Plotly figure after new optimization.")
+        # Unpack necessary results for fig creation from session state
+        tickers = st.session_state.optimization_results["tickers"]
+        expected_returns = st.session_state.optimization_results["expected_returns"]
+        std_devs = st.session_state.optimization_results["std_devs"]
+        portfolio_returns_mc = st.session_state.optimization_results["portfolio_returns_mc"]
+        portfolio_risks_mc = st.session_state.optimization_results["portfolio_risks_mc"]
+        sharpe_ratios_mc = st.session_state.optimization_results["sharpe_ratios_mc"]
+        portfolio_weights_mc = st.session_state.optimization_results["portfolio_weights_mc"]
+        min_variance_risk_scipy = st.session_state.optimization_results["min_variance_risk_scipy"]
+        min_variance_return_scipy = st.session_state.optimization_results["min_variance_return_scipy"]
+        min_variance_sharpe_scipy = st.session_state.optimization_results["min_variance_sharpe_scipy"]
+        min_variance_weights_scipy = st.session_state.optimization_results["min_variance_weights_scipy"]
+        optimal_sharpe_risk_scipy = st.session_state.optimization_results["optimal_sharpe_risk_scipy"]
+        optimal_sharpe_return_scipy = st.session_state.optimization_results["optimal_sharpe_return_scipy"]
+        max_sharpe_ratio_scipy = st.session_state.optimization_results["max_sharpe_ratio_scipy"]
+        optimal_sharpe_weights_scipy = st.session_state.optimization_results["optimal_sharpe_weights_scipy"]
+        num_assets = st.session_state.optimization_results["num_assets"]
+
+
+        # Create a DataFrame for Monte Carlo portfolios for Plotly
+        mc_portfolios_df = pd.DataFrame({
+            'Volatility (%)': np.array(portfolio_risks_mc) * 100,
+            'Expected Return (%)': np.array(portfolio_returns_mc) * 100,
+            'Sharpe Ratio': np.array(sharpe_ratios_mc)
         })
-        st.dataframe(asset_stats_df.style.format({
-            'Expected Annual Return': "{:.2%}",
-            'Annual Volatility (Risk)': "{:.2%}"
-        }))
 
-        st.subheader("Correlation Matrix")
-        # Ensure correlation_matrix is a DataFrame for display
-        if num_assets > 0:
-            correlation_df = pd.DataFrame(results["correlation_matrix"],
-                                          index=tickers,
-                                          columns=tickers)
-            st.dataframe(correlation_df.style.format("{:.2f}"))
-    else:
-        st.info("No asset statistics or correlation matrix to display as no valid tickers were found.")
+        # Add weights to hover text for MC portfolios
+        hover_text_mc = []
+        for i, weights in enumerate(portfolio_weights_mc):
+            weights_str = '<br>'.join([f'{ticker}: {w*100:.2f}%' for ticker, w in zip(tickers, weights)])
+            hover_text_mc.append(f'Return: {mc_portfolios_df.iloc[i]["Expected Return (%)"]:.2f}%<br>'
+                                 f'Volatility: {mc_portfolios_df.iloc[i]["Volatility (%)"]:.2f}%<br>'
+                                 f'Sharpe Ratio: {mc_portfolios_df.iloc[i]["Sharpe Ratio"]:.2f}<br>'
+                                 f'--- Weights ---<br>{weights_str}')
 
+        mc_portfolios_df['Hover Text'] = hover_text_mc
 
-    st.subheader("Efficient Frontier Plot")
-
-    # Only attempt to plot if there are Monte Carlo portfolios
-    if results["portfolio_risks_mc"]:
+        # Build the Plotly figure
         fig = go.Figure()
 
-        # Scatter plot for Monte Carlo portfolios
+        # Add Monte Carlo portfolios scatter plot
         fig.add_trace(go.Scatter(
-            x=results["portfolio_risks_mc"],
-            y=results["portfolio_returns_mc"],
+            x=mc_portfolios_df['Volatility (%)'],
+            y=mc_portfolios_df['Expected Return (%)'],
             mode='markers',
             marker=dict(
                 size=5,
-                color=results["sharpe_ratios_mc"], # Color points by Sharpe Ratio
-                colorbar=dict(title='Sharpe Ratio'),
-                colorscale='Viridis',
-                line=dict(width=0.5, color='white')
+                color=mc_portfolios_df['Sharpe Ratio'], # Color by Sharpe Ratio
+                colorbar=dict(title='Sharpe Ratio'),    # This defines the color bar
+                colorscale='Viridis', # Color scale for Sharpe Ratio
+                line=dict(width=0.5, color='DarkSlateGrey')
             ),
-            name='Monte Carlo Portfolios',
-            text=[
-                f"Return: {ret:.2%}<br>Risk: {risk:.2%}<br>Sharpe: {sr:.2f}<br>Weights: {', '.join([f'{t}: {w:.2%}' for t, w in zip(tickers, weights)])}"
-                for ret, risk, sr, weights in zip(results["portfolio_returns_mc"], results["portfolio_risks_mc"], results["sharpe_ratios_mc"], results["portfolio_weights_mc"])
-            ],
-            hoverinfo='text'
+            name='Monte Carlo Portfolios (Color by Sharpe Ratio)', # More descriptive legend name
+            hoverinfo='text',
+            hovertext=mc_portfolios_df['Hover Text'],
+            showlegend=True, # Explicitly ensure it appears in legend
+            legendgroup='mc_portfolios' # Assign a legend group for clearer interaction
         ))
 
-        # Add individual assets
-        if num_assets > 0: # Check again to avoid error if tickers somehow empty
-            fig.add_trace(go.Scatter(
-                x=results["std_devs"],
-                y=results["expected_returns"],
-                mode='markers+text',
-                marker=dict(size=10, color='red', symbol='circle'),
-                name='Individual Assets',
-                text=[f'{ticker}' for ticker in tickers],
-                textposition="top center",
-                textfont=dict(size=10),
-                texttemplate='%{text}', # Display ticker symbol
-                hoverinfo='text',
-                hovertext=[
-                    f"Asset: {t}<br>Return: {r:.2%}<br>Risk: {s:.2%}"
-                    for t, r, s in zip(tickers, results["expected_returns"], results["std_devs"])
+        # Prepare data for axis ranges
+        all_returns = []
+        all_risks = []
+
+        if num_assets > 0:
+            # Add SciPy Minimum Variance Portfolio
+            if min_variance_weights_scipy.size > 0:
+                fig.add_trace(go.Scatter(
+                    x=[min_variance_risk_scipy * 100],
+                    y=[min_variance_return_scipy * 100],
+                    mode='markers',
+                    marker=dict(size=12, color='red', symbol='star', line=dict(width=1, color='Black')),
+                    name='SciPy Minimum Variance Portfolio',
+                    hoverinfo='text',
+                    hovertext=[
+                        f'Return: {min_variance_return_scipy*100:.2f}%<br>'
+                        f'Volatility: {min_variance_risk_scipy*100:.2f}%<br>'
+                        f'Sharpe Ratio: {min_variance_sharpe_scipy:.2f}<br>'
+                        f'--- Weights ---<br>' + '<br>'.join([f'{t}: {w*100:.2f}%' for t, w in zip(tickers, min_variance_weights_scipy)])
+                    ],
+                    showlegend=True,
+                    legendgroup='scipy_min_var'
+                ))
+                all_returns.append(min_variance_return_scipy * 100)
+                all_risks.append(min_variance_risk_scipy * 100)
+
+            # Add SciPy Optimal Risky Portfolio (Max Sharpe)
+            if optimal_sharpe_weights_scipy.size > 0:
+                fig.add_trace(go.Scatter(
+                    x=[optimal_sharpe_risk_scipy * 100],
+                    y=[optimal_sharpe_return_scipy * 100],
+                    mode='markers',
+                    marker=dict(size=12, color='green', symbol='star', line=dict(width=1, color='Black')),
+                    name='SciPy Optimal Risky Portfolio',
+                    hoverinfo='text',
+                    hovertext=[
+                        f'Return: {optimal_sharpe_return_scipy*100:.2f}%<br>'
+                        f'Volatility: {optimal_sharpe_risk_scipy*100:.2f}%<br>'
+                        f'Sharpe Ratio: {max_sharpe_ratio_scipy:.2f}<br>'
+                        f'--- Weights ---<br>' + '<br>'.join([f'{t}: {w*100:.2f}%' for t, w in zip(tickers, optimal_sharpe_weights_scipy)])
+                    ],
+                    showlegend=True,
+                    legendgroup='scipy_max_sharpe'
+                ))
+                all_returns.append(optimal_sharpe_return_scipy * 100)
+                all_risks.append(optimal_sharpe_risk_scipy * 100)
+
+            # Individual Assets to the plot for context (no text labels, rely on hover)
+            if tickers and len(tickers) > 0 and not expected_returns.empty and not std_devs.empty:
+                individual_asset_hover_text = [
+                    f'Asset: {t}<br>Return: {expected_returns[t]*100:.2f}%<br>Volatility: {std_devs[t]*100:.2f}%'
+                    for t in tickers
                 ]
-            ))
+                fig.add_trace(go.Scatter(
+                    x=std_devs * 100,
+                    y=expected_returns * 100,
+                    mode='markers',
+                    marker=dict(size=8, color='gray', symbol='circle', line=dict(width=1, color='DarkSlateGrey')),
+                    name='Individual Assets',
+                    hoverinfo='text',
+                    hovertext=individual_asset_hover_text,
+                    showlegend=True,
+                    legendgroup='individual_assets'
+                ))
+                all_returns.extend((expected_returns * 100).tolist())
+                all_risks.extend((std_devs * 100).tolist())
 
-        # Add Minimum Variance Portfolio (SciPy)
-        if results["min_variance_risk_scipy"] > 0 and results["min_variance_return_scipy"] > 0: # Ensure non-zero values
-            fig.add_trace(go.Scatter(
-                x=[results["min_variance_risk_scipy"]],
-                y=[results["min_variance_return_scipy"]],
-                mode='markers',
-                marker=dict(size=12, color='darkorange', symbol='star'),
-                name='Min Variance Portfolio (SciPy)',
-                text=f"Return: {results['min_variance_return_scipy']:.2%}<br>Risk: {results['min_variance_risk_scipy']:.2%}<br>Sharpe: {results['min_variance_sharpe_scipy']:.2f}<br>Weights: {', '.join([f'{t}: {w:.2%}' for t, w in zip(tickers, results['min_variance_weights_scipy'])])}",
-                hoverinfo='text'
-            ))
+        # Collect all Monte Carlo returns and risks for axis scaling
+        all_returns.extend(mc_portfolios_df['Expected Return (%)'].tolist())
+        all_risks.extend(mc_portfolios_df['Volatility (%)'].tolist())
 
-        # Add Optimal Risky Portfolio (Max Sharpe - SciPy)
-        if results["optimal_sharpe_risk_scipy"] > 0 and results["optimal_sharpe_return_scipy"] > 0: # Ensure non-zero values
-            fig.add_trace(go.Scatter(
-                x=[results["optimal_sharpe_risk_scipy"]],
-                y=[results["optimal_sharpe_return_scipy"]],
-                mode='markers',
-                marker=dict(size=12, color='red', symbol='star'),
-                name='Optimal Risky Portfolio (SciPy - Max Sharpe)',
-                text=f"Return: {results['optimal_sharpe_return_scipy']:.2%}<br>Risk: {results['optimal_sharpe_risk_scipy']:.2%}<br>Sharpe: {results['max_sharpe_ratio_scipy']:.2f}<br>Weights: {', '.join([f'{t}: {w:.2%}' for t, w in zip(tickers, results['optimal_sharpe_weights_scipy'])])}",
-                hoverinfo='text'
-            ))
+        # Calculate dynamic axis ranges with a buffer
+        if all_returns and all_risks: # Ensure lists are not empty
+            min_return_val = min(all_returns)
+            max_return_val = max(all_returns)
+            min_risk_val = min(all_risks)
+            max_risk_val = max(all_risks)
 
-        # Add Capital Market Line (CML)
-        # Assuming risk-free rate is annual
-        cml_x = np.array([0, results["optimal_sharpe_risk_scipy"] + 0.05]) # Extend line slightly
-        cml_y = risk_free_rate_input + (results["optimal_sharpe_return_scipy"] - risk_free_rate_input) / results["optimal_sharpe_risk_scipy"] * cml_x
-        fig.add_trace(go.Scatter(
-            x=cml_x, y=cml_y,
-            mode='lines',
-            line=dict(color='grey', dash='dash'),
-            name='Capital Market Line'
-        ))
+            # Add a 5% buffer to the ranges
+            y_range_buffer = (max_return_val - min_return_val) * 0.05
+            x_range_buffer = (max_risk_val - min_risk_val) * 0.05
+
+            y_axis_range = [min_return_val - y_range_buffer, max_return_val + y_range_buffer]
+            x_axis_range = [min_risk_val - x_range_buffer, max_risk_val + x_range_buffer]
+            # Ensure X-axis starts at or near zero for risk
+            if x_axis_range[0] > -0.5: # Allow slight negative for very small range or if shorting allows
+                x_axis_range[0] = -0.5 # Clamp at -0.5 (or slightly below if needed for specific cases)
+
+            # Ensure Y-axis minimum is not too high if risk-free rate is very low or negative
+            # This ensures the risk-free rate (if shown) is always in view
+            if y_axis_range[0] > risk_free_rate_input * 100:
+                y_axis_range[0] = risk_free_rate_input * 100 - y_range_buffer
+        else: # Fallback to default ranges if no data points
+            y_axis_range = [-10, 50]
+            x_axis_range = [0, 50]
 
 
+        # Update layout for Plotly figure
         fig.update_layout(
-            title='Efficient Frontier with Monte Carlo Simulation and Optimization',
-            xaxis_title='Annual Volatility (Risk)',
-            yaxis_title='Annual Return',
+            title={
+                'text': 'Efficient Frontier with Monte Carlo & SciPy Optimization',
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top'
+            },
+            margin=dict(t=80, b=150, l=0, r=0), # Increased bottom margin for legend
+            xaxis_title='Volatility (%)',
+            yaxis_title='Expected Return (%)',
             hovermode='closest',
-            legend=dict(x=0.01, y=0.99, bgcolor='rgba(255, 255, 255, 0.5)'),
-            width=800, # Set a default width, Streamlit will adjust to column width
-            height=500
+            height=600,
+            template="plotly_white",
+            legend=dict( # Position the legend BELOW the plot area
+                orientation="h", # Horizontal legend for better fit below
+                yanchor="top", # Anchor from the top of the legend box
+                y=-0.2, # Position below the plot area (0 is bottom of plot, negative moves it further down)
+                xanchor="center", # Center horizontally
+                x=0.5,
+                bgcolor='rgba(0,0,0,0)', # Transparent background
+                bordercolor="rgba(0,0,0,0)", # Transparent border
+                borderwidth=0
+            ),
+            xaxis=dict(range=x_axis_range), # Apply dynamic x-axis range
+            yaxis=dict(range=y_axis_range)  # Apply dynamic y-axis range
         )
-        st.plotly_chart(fig, use_container_width=True)
-        st.session_state.plotly_fig = fig # Store the figure for download
+        st.session_state.plotly_fig = fig # Store the freshly built figure in session state
 
-        # Download button for the plot
-        if st.session_state.plotly_fig:
-            buffer = io.BytesIO()
-            st.session_state.plotly_fig.write_image(buffer, format="png")
-            st.download_button(
-                label="Download Plot as PNG",
-                data=buffer,
-                file_name="efficient_frontier.png",
-                mime="image/png",
-                key="download_plot_png"
-            )
-    else:
-        st.warning("⚠️ No Monte Carlo portfolios were generated. Check your inputs (e.g., number of portfolios, valid tickers).")
+    results_container.empty() # Clear the info/spinner message
+    st.success("✅ Simulation and Optimization completed! Scroll down to see results.")
 
 
+# ==============================================================================
+# 🚀 Main Display Logic (Executes if simulation has run at least once)
+# This block displays results by retrieving data from session state.
+# ==============================================================================
+if st.session_state.simulation_run and st.session_state.optimization_results:
+    print("DEBUG: Main display block active.") # Debug print
+    # Unpack results from session state for display
+    optimization_results = st.session_state.optimization_results
+    tickers = optimization_results["tickers"]
+    expected_returns = optimization_results["expected_returns"]
+    std_devs = optimization_results["std_devs"]
+    correlation_matrix = optimization_results["correlation_matrix"]
+    cov_matrix = optimization_results["cov_matrix"]
+    num_assets = optimization_results["num_assets"]
+    portfolio_returns_mc = optimization_results["portfolio_returns_mc"]
+    portfolio_risks_mc = optimization_results["portfolio_risks_mc"]
+    portfolio_weights_mc = optimization_results["portfolio_weights_mc"]
+    sharpe_ratios_mc = optimization_results["sharpe_ratios_mc"]
+    min_risk_mc = optimization_results["min_risk_mc"]
+    min_return_mc = optimization_results["min_return_mc"]
+    min_weights_mc = optimization_results["min_weights_mc"]
+    min_sharpe_mc = optimization_results["min_sharpe_mc"]
+    optimal_risk_mc = optimization_results["optimal_risk_mc"]
+    optimal_return_mc = optimization_results["optimal_return_mc"]
+    optimal_weights_mc = optimization_results["optimal_weights_mc"]
+    max_sharpe_ratio_mc = optimization_results["max_sharpe_ratio_mc"]
+    optimal_sharpe_weights_scipy = optimization_results["optimal_sharpe_weights_scipy"]
+    optimal_sharpe_return_scipy = optimization_results["optimal_sharpe_return_scipy"]
+    optimal_sharpe_risk_scipy = optimization_results["optimal_sharpe_risk_scipy"]
+    max_sharpe_ratio_scipy = optimization_results["max_sharpe_ratio_scipy"]
+    min_variance_weights_scipy = optimization_results["min_variance_weights_scipy"]
+    min_variance_return_scipy = optimization_results["min_variance_return_scipy"]
+    min_variance_risk_scipy = optimization_results["min_variance_risk_scipy"]
+    min_variance_sharpe_scipy = optimization_results["min_variance_sharpe_scipy"]
+    returns_df = optimization_results["returns_df"]
+
+    # =========================================================================
+    # 2. Display Asset Statistics
+    # =========================================================================
+    st.subheader("Asset Statistics")
+    st.write("📈 Expected Annual Returns (%):")
+    st.dataframe((expected_returns * 100).round(2).rename("Return (%)"))
+    st.write("📊 Annual Volatility (%):")
+    st.dataframe((std_devs * 100).round(2).rename("Volatility (%)"))
+    print("DEBUG: Step 8: Displayed Asset Statistics.") # Debug print
+
+    if num_assets > 1:
+        st.write("🔗 Correlation Matrix:")
+        st.dataframe(pd.DataFrame(correlation_matrix, index=tickers, columns=tickers).round(2))
+    elif num_assets == 1:
+        st.info("Since you only provided one asset, the correlation matrix is simply 1.0 (an asset is perfectly correlated with itself).")
+
+    st.write(f"Risk-Free Rate ($R_f$): {risk_free_rate_input*100:.2f}%")
+    print("DEBUG: Step 9: Displayed Correlation Matrix and Risk-Free Rate.") # Debug print
+
+
+    # =========================================================================
+    # 3. SciPy Optimization Results
+    # =========================================================================
     st.subheader("Optimal Portfolios (SciPy Optimization)")
-    col_max_sharpe, col_min_var = st.columns(2)
+    print("DEBUG: Displaying SciPy Optimization Results.") # Debug print
 
-    if results["optimal_sharpe_weights_scipy"].size > 0:
-        with col_max_sharpe:
-            st.write("**Optimal Risky Portfolio (Highest Sharpe Ratio)**")
-            st.metric(label="Expected Annual Return", value=f"{results['optimal_sharpe_return_scipy']:.2%}")
-            st.metric(label="Annual Volatility (Risk)", value=f"{results['optimal_sharpe_risk_scipy']:.2%}")
-            st.metric(label="Sharpe Ratio", value=f"{results['max_sharpe_ratio_scipy']:.2f}")
-
-            st.write("Portfolio Weights:")
-            # Create a DataFrame for weights for better display and download
-            weights_df_sharpe = pd.DataFrame({
-                'Ticker': tickers,
-                'Weight': results['optimal_sharpe_weights_scipy']
-            }).set_index('Ticker')
-            st.dataframe(weights_df_sharpe.style.format("{:.2%}"))
-
-            csv_sharpe = weights_df_sharpe.to_csv().encode('utf-8')
-            st.download_button(
-                label="Download Optimal Sharpe Weights (CSV)",
-                data=csv_sharpe,
-                file_name="optimal_sharpe_weights.csv",
-                mime="text/csv",
-                key="download_sharpe_weights"
-            )
+    if num_assets == 0:
+        st.error("No assets available for optimization.")
+    elif (num_assets == 1 and not (global_min_weight <= 1.0 <= global_max_weight)):
+        st.warning("Skipping SciPy results for single asset due to infeasible constraints (100% not allowed by min/max).")
     else:
-        with col_max_sharpe:
-            st.info("Optimal Risky Portfolio not found (likely due to invalid inputs or constraints).")
+        if optimal_sharpe_weights_scipy.size > 0:
+            st.write("🚀 **Optimal Risky Portfolio (Max Sharpe Ratio - SciPy):**")
+            optimal_sharpe_df_scipy = pd.DataFrame({'Ticker': tickers, 'Weight (%)': (optimal_sharpe_weights_scipy * 100).round(2)})
+            st.dataframe(optimal_sharpe_df_scipy)
+            st.write(f"Expected Return: {optimal_sharpe_return_scipy*100:.2f}%")
+            st.write(f"Volatility (Risk): {optimal_sharpe_risk_scipy*100:.2f}%")
+            st.write(f"Sharpe Ratio: {max_sharpe_ratio_scipy:.2f}")
+        else:
+            st.warning("Optimal Risky Portfolio (SciPy) could not be found with current constraints or data.")
 
+        if min_variance_weights_scipy.size > 0:
+            st.write("\n🌟 **Minimum Variance Portfolio (SciPy):**")
+            min_var_df_scipy = pd.DataFrame({'Ticker': tickers, 'Weight (%)': (min_variance_weights_scipy * 100).round(2)})
+            st.dataframe(min_var_df_scipy)
+            st.write(f"Expected Return: {min_variance_return_scipy*100:.2f}%")
+            st.write(f"Volatility (Risk): {min_variance_risk_scipy*100:.2f}%")
+            st.write(f"Sharpe Ratio: {min_variance_sharpe_scipy:.2f}")
+        else:
+            st.warning("Minimum Variance Portfolio (SciPy) could not be found with current constraints or data.")
+    print("DEBUG: SciPy Optimization Results displayed.") # Debug print
 
-    if results["min_variance_weights_scipy"].size > 0:
-        with col_min_var:
-            st.write("**Minimum Variance Portfolio**")
-            st.metric(label="Expected Annual Return", value=f"{results['min_variance_return_scipy']:.2%}")
-            st.metric(label="Annual Volatility (Risk)", value=f"{results['min_variance_risk_scipy']:.2%}")
-            st.metric(label="Sharpe Ratio", value=f"{results['min_variance_sharpe_scipy']:.2f}")
-
-            st.write("Portfolio Weights:")
-            weights_df_min_var = pd.DataFrame({
-                'Ticker': tickers,
-                'Weight': results['min_variance_weights_scipy']
-            }).set_index('Ticker')
-            st.dataframe(weights_df_min_var.style.format("{:.2%}"))
-
-            csv_min_var = weights_df_min_var.to_csv().encode('utf-8')
-            st.download_button(
-                label="Download Minimum Variance Weights (CSV)",
-                data=csv_min_var,
-                file_name="min_variance_weights.csv",
-                mime="text/csv",
-                key="download_min_var_weights"
-            )
-    else:
-        with col_min_var:
-            st.info("Minimum Variance Portfolio not found (likely due to invalid inputs or constraints).")
-
+    # =========================================================================
+    # 4. Display Portfolio Risk Measures (VaR & CVaR)
+    # =========================================================================
     st.subheader("Portfolio Risk Measures (VaR & CVaR)")
-    if results["returns_df"] is not None and not results["returns_df"].empty and results["optimal_sharpe_weights_scipy"].size > 0:
-        # Calculate daily returns for the optimal Sharpe portfolio
-        optimal_sharpe_portfolio_returns = results["returns_df"].dot(results["optimal_sharpe_weights_scipy"])
-        var_sharpe, cvar_sharpe = calculate_historical_var_cvar(optimal_sharpe_portfolio_returns, confidence_level=0.95, annualize=True)
+    print("DEBUG: Calculating and displaying VaR/CVaR.") # Debug print
 
-        st.markdown(f"**Optimal Risky Portfolio (95% Confidence)**")
-        st.metric("Annualized Value-at-Risk (VaR)", f"{var_sharpe:.2%}")
-        st.metric("Annualized Conditional VaR (CVaR)", f"{cvar_sharpe:.2%}")
-
+    if num_assets == 0:
+        st.error("No assets to calculate VaR/CVaR.")
+    elif (num_assets == 1 and not (global_min_weight <= 1.0 <= global_max_weight)):
+        st.warning("Skipping VaR/CVaR for single asset due to infeasible constraints.")
     else:
-        st.info("VaR and CVaR for Optimal Risky Portfolio not available (no valid portfolio or data).")
+        # Calculate daily returns for the SciPy optimal portfolios
+        # Ensure weights are aligned with returns_df columns
+        # This handles cases where some tickers might have been dropped due to missing data
+        if optimal_sharpe_weights_scipy.size > 0 and len(optimal_sharpe_weights_scipy) == len(returns_df.columns):
+            portfolio_returns_sharpe = returns_df.dot(optimal_sharpe_weights_scipy)
+            var_sharpe_95, cvar_sharpe_95 = calculate_historical_var_cvar(portfolio_returns_sharpe, confidence_level=0.95, annualize=True)
+            var_sharpe_99, cvar_sharpe_99 = calculate_historical_var_cvar(portfolio_returns_sharpe, confidence_level=0.99, annualize=True)
+
+            st.write("📈 **Optimal Risky Portfolio (Max Sharpe Ratio - SciPy):**")
+            st.write(f"  Annualized 95% VaR: {var_sharpe_95*100:.2f}%")
+            st.write(f"  Annualized 95% CVaR: {cvar_sharpe_95*100:.2f}%")
+            st.write(f"  Annualized 99% VaR: {var_sharpe_99*100:.2f}%")
+            st.write(f"  Annualized 99% CVaR: {cvar_sharpe_99*100:.2f}%")
+        else:
+            st.warning("Could not calculate VaR/CVaR for Max Sharpe Portfolio due to missing weights or data misalignment/infeasibility.")
 
 
-    st.subheader("Monte Carlo Portfolio Approximation (For Comparison)")
-    if results["portfolio_risks_mc"]: # Check if MC results exist
-        col_mc_sharpe, col_mc_min_risk = st.columns(2)
+        if min_variance_weights_scipy.size > 0 and len(min_variance_weights_scipy) == len(returns_df.columns):
+            portfolio_returns_min_var = returns_df.dot(min_variance_weights_scipy)
+            var_min_var_95, cvar_min_var_95 = calculate_historical_var_cvar(portfolio_returns_min_var, confidence_level=0.95, annualize=True)
+            var_min_var_99, cvar_min_var_99 = calculate_historical_var_cvar(portfolio_returns_min_var, confidence_level=0.99, annualize=True)
 
-        with col_mc_sharpe:
-            st.write("**Monte Carlo Highest Sharpe Ratio Portfolio**")
-            st.metric(label="Expected Annual Return", value=f"{results['optimal_return_mc']:.2%}")
-            st.metric(label="Annual Volatility (Risk)", value=f"{results['optimal_risk_mc']:.2%}")
-            st.metric(label="Sharpe Ratio", value=f"{results['max_sharpe_ratio_mc']:.2f}")
-            st.write("Weights:")
-            mc_sharpe_weights_df = pd.DataFrame({
-                'Ticker': tickers,
-                'Weight': results['optimal_weights_mc']
-            }).set_index('Ticker')
-            st.dataframe(mc_sharpe_weights_df.style.format("{:.2%}"))
+            st.write("\n📊 **Minimum Variance Portfolio (SciPy):**")
+            st.write(f"  Annualized 95% VaR: {var_min_var_95*100:.2f}%")
+            st.write(f"  Annualized 95% CVaR: {cvar_min_var_95*100:.2f}%")
+            st.write(f"  Annualized 99% VaR: {var_min_var_99*100:.2f}%")
+            st.write(f"  Annualized 99% CVaR: {cvar_min_var_99*100:.2f}%")
+        else:
+             st.warning("Could not calculate VaR/CVaR for Min Variance Portfolio due to missing weights or data misalignment/infeasibility.")
 
-        with col_mc_min_risk:
-            st.write("**Monte Carlo Minimum Risk Portfolio**")
-            st.metric(label="Expected Annual Return", value=f"{results['min_return_mc']:.2%}")
-            st.metric(label="Annual Volatility (Risk)", value=f"{results['min_risk_mc']:.2%}")
-            st.metric(label="Sharpe Ratio", value=f"{results['min_sharpe_mc']:.2f}")
-            st.write("Weights:")
-            mc_min_risk_weights_df = pd.DataFrame({
-                'Ticker': tickers,
-                'Weight': results['min_weights_mc']
-            }).set_index('Ticker')
-            st.dataframe(mc_min_risk_weights_df.style.format("{:.2%}"))
-    else:
-        st.info("No Monte Carlo portfolio approximations to display.")
+    print("DEBUG: VaR/CVaR calculations and display complete.") # Debug print
+
+    # =========================================================================
+    # 5. Plot Efficient Frontier (Static Plotly)
+    # =========================================================================
+    st.subheader("Efficient Frontier Plot")
+    print("DEBUG: Displaying Plotly chart from session_state.")
+
+    fig_to_display = st.session_state.plotly_fig
+
+    if fig_to_display:
+        st.plotly_chart(fig_to_display, use_container_width=True) # Display the Plotly chart statically
+
+        st.info("💡 **Tip for the chart:** Hover over points for detailed information. Click on a legend item to hide/show that series. Double-click an item to isolate it (hide all others).")
+
+        st.download_button(
+            label="Download Plot as PNG",
+            data=fig_to_display.to_image(format="png"),
+            file_name="efficient_frontier_plot.png",
+            mime="image/png",
+            help="Requires 'kaleido' library (pip install kaleido)"
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True) # Add a line break for spacing
+        st.write("---") # A horizontal line for clear separation
+
+        print("DEBUG: Plotly chart displayed.")
+
+    # =========================================================================
+    # 6. Display Monte Carlo Portfolio Details (for comparison)
+    # =========================================================================
+    st.subheader("Monte Carlo Portfolio Details (Approximate)")
+    st.write("🌟 **Monte Carlo Minimum Variance Portfolio Allocation:**")
+    min_var_df_mc = pd.DataFrame({'Ticker': tickers, 'Weight (%)': (min_weights_mc * 100).round(2)})
+    st.dataframe(min_var_df_mc)
+    st.write(f"Expected Return: {min_return_mc*100:.2f}%")
+    st.write(f"Volatility (Risk): {min_risk_mc*100:.2f}%")
+    st.write(f"Sharpe Ratio: {min_sharpe_mc:.2f}")
+
+    st.write("\n🚀 **Monte Carlo Optimal Risky Portfolio (Max Sharpe Ratio) Allocation:**")
+    optimal_df_mc = pd.DataFrame({'Ticker': tickers, 'Weight (%)': (optimal_weights_mc * 100).round(2)})
+    st.dataframe(optimal_df_mc)
+    st.write(f"Expected Return: {optimal_return_mc*100:.2f}%")
+    st.write(f"Volatility (Risk): {optimal_risk_mc*100:.2f}%")
+    st.write(f"Sharpe Ratio: {max_sharpe_ratio_mc:.2f}")
+    print("DEBUG: Monte Carlo Portfolio details displayed.") # Debug print
+
+    # =========================================================================
+    # 7. Download All Results Button
+    # Provides combined results from both Monte Carlo and SciPy optimizations.
+    # =========================================================================
+    st.markdown("---") # Horizontal separator for visual grouping
+    st.subheader("Download All Tabular Results")
+    print("DEBUG: Preparing download button.") # Debug print
+
+    csv_output = io.StringIO()
+    csv_output.write("Optimal Risky Portfolio (SciPy) Allocation:\n")
+    if num_assets > 0 and optimal_sharpe_weights_scipy.size > 0:
+        optimal_sharpe_df_scipy.to_csv(csv_output, index=False, header=True)
+    csv_output.write("\n\nMinimum Variance Portfolio (SciPy) Allocation:\n")
+    if num_assets > 0 and min_variance_weights_scipy.size > 0:
+        min_var_df_scipy.to_csv(csv_output, index=False, header=True)
+    csv_output.write("\n\nMonte Carlo Optimal Risky Portfolio Allocation (Approximate):\n")
+    optimal_df_mc.to_csv(csv_output, index=False, header=True)
+    csv_output.write("\n\nMonte Carlo Minimum Variance Portfolio Allocation (Approximate):\n")
+    min_var_df_mc.to_csv(csv_output, index=False, header=True)
+
+    st.download_button(
+        label="Download All Portfolio Data (CSV)",
+        data=csv_output.getvalue(),
+        file_name="optimized_portfolios_details.csv",
+        mime="text/csv",
+        help="Download the optimal and minimum variance portfolio allocations from both Monte Carlo and SciPy methods."
+    )
+    print("DEBUG: Download All Results button displayed. End of run_button block.") # Debug print
 
 # ==============================================================================
 # 8. Sidebar Information / Footer
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.header("About This App")
-st.sidebar.info("Developed by Rafael Grilli Felizardo with AI tools. This app demonstrates Markowitz Portfolio Optimization, a fundamental concept in modern portfolio theory. For feedback, inquiries, or collaboration, please feel free to reach out!")
+st.sidebar.info("Developed by Rafael Grilli Felizardo with the support of AI tools. This tool demonstrates Markowitz Portfolio Optimization, a fundamental concept in modern portfolio theory. For feedback, inquiries, or collaboration, please feel free to reach out!")
 st.sidebar.markdown("© 2025 Rafael Grilli Felizardo - Portfolio Simulator. All rights reserved.")
-
