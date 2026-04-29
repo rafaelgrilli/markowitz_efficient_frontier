@@ -1,4 +1,3 @@
-# streamlit_app.py
 import streamlit as st
 from yahooquery import Ticker
 import pandas as pd
@@ -9,124 +8,198 @@ import io
 import scipy.optimize as sco
 
 # ==============================================================================
-# ⚙️ Configuração da Página
+# ⚙️ CONFIGURAÇÃO E ESTÉTICA
 # ==============================================================================
-st.set_page_config(page_title="Markowitz Pro", layout="wide")
+st.set_page_config(page_title="Markowitz Portfolio Pro", layout="wide", initial_sidebar_state="expanded")
 
-st.title("📊 Simulador de Fronteira Eficiente")
-st.write("Versão Otimizada 2026 - Foco em Estabilidade de Dados")
+# CSS para melhorar a aparência
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_html=True)
 
-# ==============================================================================
-# 🔢 Lógica Financeira e Funções de Risco
-# ==============================================================================
-
-def calcular_var_cvar(retornos_portfolio, confianca=0.95):
-    """Calcula VaR e CVaR Histórico Anualizado"""
-    retornos_ordenados = np.sort(retornos_portfolio)
-    indice = int((1 - confianca) * len(retornos_ordenados))
-    var = retornos_ordenados[indice]
-    cvar = retornos_ordenados[:indice].mean()
-    # Annualizando (aproximação por raiz de tempo)
-    return -var * np.sqrt(252), -cvar * np.sqrt(252)
-
-def neg_sharpe(pesos, ret_anuais, cov_matrix, rf):
-    p_ret = np.dot(pesos, ret_anuais)
-    p_vol = np.sqrt(np.dot(pesos.T, np.dot(cov_matrix, pesos)))
-    return -(p_ret - rf) / p_vol
-
-def vol_portfolio(pesos, cov_matrix):
-    return np.sqrt(np.dot(pesos.T, np.dot(cov_matrix, pesos)))
+st.title("📊 Simulador Avançado de Carteiras: Markowitz & Risco")
+st.write("---")
 
 # ==============================================================================
-# 📥 Gestão de Dados (Corrigido para instabilidades do Yahoo)
+# 🔢 MOTOR DE CÁLCULO E RISCO (ESPÍRITO ORIGINAL)
+# ==============================================================================
+
+def calcular_metricas_risco(retornos_portfolio, confianca=0.95):
+    """Cálculo detalhado de VaR e CVaR Histórico Anualizado"""
+    rets = np.sort(retornos_portfolio)
+    idx = int((1 - confianca) * len(rets))
+    var_diario = rets[idx]
+    cvar_diario = rets[:idx].mean()
+    # Escalonamento para o ano (252 dias úteis)
+    return abs(var_diario * np.sqrt(252)), abs(cvar_diario * np.sqrt(252))
+
+def calcular_stats_carteira(pesos, rets_anuais, matriz_cov, rf):
+    """Retorna Retorno, Volatilidade e Sharpe de uma composição"""
+    p_ret = np.dot(pesos, rets_anuais)
+    p_vol = np.sqrt(np.dot(pesos.T, np.dot(matriz_cov, pesos)))
+    p_sharpe = (p_ret - rf) / p_vol if p_vol != 0 else 0
+    return p_ret, p_vol, p_sharpe
+
+# Funções de Otimização (SciPy)
+def min_func_sharpe(pesos, rets_anuais, matriz_cov, rf):
+    return -calcular_stats_carteira(pesos, rets_anuais, matriz_cov, rf)[2]
+
+def min_func_vol(pesos, rets_anuais, matriz_cov, rf):
+    return calcular_stats_carteira(pesos, rets_anuais, matriz_cov, rf)[1]
+
+# ==============================================================================
+# 📥 GERENCIAMENTO DE DADOS (VERSÃO ROBUSTA)
 # ==============================================================================
 
 @st.cache_data(ttl=3600)
-def obter_dados(lista_tickers, inicio, fim):
+def fetch_data(tickers, start, end):
     try:
-        obj = Ticker(lista_tickers)
-        df = obj.history(start=inicio, end=fim)
-        if isinstance(df, str) or df.empty:
-            return None, None
-        
+        t_obj = Ticker(tickers)
+        df = t_obj.history(start=start, end=end)
+        if isinstance(df, str) or df.empty: return None
         df = df.reset_index()
-        col = 'adjclose' if 'adjclose' in df.columns else 'close'
-        precos = df.pivot(index='date', columns='symbol', values=col).ffill().dropna()
-        return precos, precos.columns.tolist()
-    except:
-        return None, None
+        col_preco = 'adjclose' if 'adjclose' in df.columns else 'close'
+        prices = df.pivot(index='date', columns='symbol', values=col_preco).ffill().dropna()
+        return prices
+    except: return None
 
 # ==============================================================================
-# 🎛️ Interface e Inputs
+# 🎛️ INTERFACE LATERAL (FUNCIONALIDADES COMPLETAS)
 # ==============================================================================
 with st.sidebar:
-    st.header("Configurações")
-    tickers_txt = st.text_input("Ativos:", "PETR4.SA, VALE3.SA, ITUB4.SA, ABEV3.SA, AAPL")
-    rf_rate = st.number_input("Taxa Livre de Risco (Selic/T-Bill):", value=0.1075, format="%.4f")
-    sd = st.date_input("Início:", date(2020, 1, 1))
-    ed = st.date_input("Fim:", date.today())
-    n_sim = st.slider("Simulações Monte Carlo:", 1000, 20000, 5000)
-
-if st.button("🚀 Executar Otimização"):
-    lista = [t.strip().upper() for t in tickers_txt.split(",") if t.strip()]
+    st.header("🎯 Configurações da Estratégia")
+    tickers_in = st.text_input("Ativos (Ticker + .SA se B3):", "PETR4.SA, VALE3.SA, ITUB4.SA, WEGE3.SA, AAPL, MSFT")
     
-    with st.spinner("Sincronizando com Yahoo Finance..."):
-        precos, ativos = obter_dados(lista, sd.isoformat(), ed.isoformat())
+    col_rf, col_sim = st.columns(2)
+    with col_rf:
+        rf_rate = st.number_input("Tx. Livre Risco:", value=0.1075, step=0.005, format="%.4f")
+    with col_sim:
+        n_portfolios = st.number_input("Simulações MC:", 1000, 50000, 10000, 1000)
+    
+    d_ini = st.date_input("Início da Análise:", date(2020, 1, 1))
+    d_fim = st.date_input("Fim da Análise:", date.today())
+    
+    st.markdown("---")
+    st.subheader("⚖️ Restrições de Peso")
+    min_w = st.slider("Peso Mínimo por Ativo:", 0.0, 0.2, 0.0)
+    max_w = st.slider("Peso Máximo por Ativo:", 0.1, 1.0, 1.0)
+    
+    run = st.button("🚀 EXECUTAR OTIMIZAÇÃO", use_container_width=True)
+
+# ==============================================================================
+# 🚀 EXECUÇÃO E DASHBOARD
+# ==============================================================================
+if run:
+    lista_t = [t.strip().upper() for t in tickers_in.split(",") if t.strip()]
+    
+    with st.spinner("Puxando dados e processando matrizes..."):
+        precos = fetch_data(lista_t, d_ini.isoformat(), d_fim.isoformat())
         
-        if precos is None:
-            st.error("Erro ao puxar dados. Verifique os tickers (ex: PETR4.SA) e a conexão.")
+        if precos is None or precos.empty:
+            st.error("❌ Erro ao obter dados. Verifique a internet e os tickers.")
             st.stop()
 
-        # Cálculos Base
+        ativos = precos.columns.tolist()
+        n = len(ativos)
+        
+        # Estatísticas de Mercado
         rets_diarios = precos.pct_change().dropna()
         rets_anual = rets_diarios.mean() * 252
-        cov_anual = rets_diarios.cov() * 252
-        
-        # --- Otimização SciPy ---
-        n = len(ativos)
-        cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-        bnds = tuple((0, 1) for _ in range(n))
-        init = n * [1./n]
-        
-        opt_s = sco.minimize(neg_sharpe, init, args=(rets_anual, cov_anual, rf_rate), method='SLSQP', bounds=bnds, constraints=cons)
-        opt_v = sco.minimize(vol_portfolio, init, args=(cov_anual), method='SLSQP', bounds=bnds, constraints=cons)
+        matriz_cov = rets_diarios.cov() * 252
+        correlacao = rets_diarios.corr()
 
-        # --- Monte Carlo ---
-        m_ret, m_vol, m_sh = [], [], []
-        for _ in range(n_sim):
-            w = np.random.rand(n)
+        # 1. Otimização Numérica (SciPy) - Max Sharpe e Min Vol
+        bounds = tuple((min_w, max_w) for _ in range(n))
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+        init_guess = n * [1./n]
+        
+        opt_sharpe = sco.minimize(min_func_sharpe, init_guess, args=(rets_anual, matriz_cov, rf_rate), method='SLSQP', bounds=bounds, constraints=constraints)
+        opt_vol = sco.minimize(min_func_vol, init_guess, args=(rets_anual, matriz_cov, rf_rate), method='SLSQP', bounds=bounds, constraints=constraints)
+
+        # 2. Monte Carlo (Espírito Original)
+        mc_rets, mc_vols, mc_sharpes = [], [], []
+        for _ in range(n_portfolios):
+            w = np.random.random(n)
             w /= np.sum(w)
-            m_ret.append(np.dot(w, rets_anual))
-            m_vol.append(np.sqrt(np.dot(w.T, np.dot(cov_anual, w))))
-            m_sh.append((m_ret[-1] - rf_rate) / m_vol[-1])
+            r, v, s = calcular_stats_carteira(w, rets_anual, matriz_cov, rf_rate)
+            mc_rets.append(r)
+            mc_vols.append(v)
+            mc_sharpes.append(s)
 
-        # ==============================================================================
-        # 📈 Visualização e Resultados
-        # ==============================================================================
-        col_a, col_b = st.columns(2)
+        # ----------------------------------------------------------------------
+        # 📈 DASHBOARD DE RESULTADOS
+        # ----------------------------------------------------------------------
+        tab1, tab2, tab3 = st.tabs(["💎 Carteiras Ótimas", "📈 Fronteira Eficiente", "📊 Análise de Ativos"])
         
-        with col_a:
-            st.subheader("Carteira de Tangência (Max Sharpe)")
-            res_s = pd.DataFrame({'Ativo': ativos, 'Peso': opt_s.x})
-            st.dataframe(res_s.style.format({'Peso': '{:.2%}'}))
+        with tab1:
+            st.subheader("Comparativo de Alocação")
+            col_m1, col_m2, col_m3 = st.columns(3)
             
-            # Métricas de Risco (Funcionalidade recuperada do seu código original)
-            p_rets_opt = rets_diarios.dot(opt_s.x)
-            v95, cv95 = calcular_var_cvar(p_rets_opt)
-            st.metric("VaR Anualizado (95%)", f"{v95:.2%}")
-            st.metric("CVaR (Expected Shortfall)", f"{cv95:.2%}")
+            # Carteira de Tangência (Max Sharpe)
+            r_s, v_s, s_s = calcular_stats_carteira(opt_sharpe.x, rets_anual, matriz_cov, rf_rate)
+            # Risco de Cauda
+            var_s, cvar_s = calcular_metricas_risco(rets_diarios.dot(opt_sharpe.x))
+            
+            with col_m1:
+                st.metric("Retorno Esperado (Max Sharpe)", f"{r_s:.2%}")
+                st.metric("Sharpe Ratio", f"{s_s:.2f}")
+            with col_m2:
+                st.metric("Volatilidade (Risco)", f"{v_s:.2%}")
+                st.metric("VaR Anualizado (95%)", f"{var_s:.2%}")
+            with col_m3:
+                st.metric("CVaR (Expected Shortfall)", f"{cvar_s:.2%}")
+            
+            # Tabela de Pesos
+            st.write("#### Composição Detalhada")
+            df_pesos = pd.DataFrame({
+                "Ativo": ativos,
+                "Max Sharpe (%)": (opt_sharpe.x * 100).round(2),
+                "Min Volatilidade (%)": (opt_vol.x * 100).round(2)
+            })
+            st.dataframe(df_pesos, use_container_width=True)
 
-        with col_b:
-            st.subheader("Fronteira de Eficiência")
+        with tab2:
+            st.subheader("Visualização da Fronteira Eficiente")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=m_vol, y=m_ret, mode='markers', marker=dict(color=m_sh, colorscale='Viridis', size=5), name="Monte Carlo"))
-            fig.add_trace(go.Scatter(x=[vol_portfolio(opt_s.x, cov_anual)], y=[np.dot(opt_s.x, rets_anual)], mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Max Sharpe"))
-            fig.update_layout(xaxis_title="Volatilidade (Risco)", yaxis_title="Retorno Esperado", height=500)
+            
+            # Nuvens Monte Carlo
+            fig.add_trace(go.Scatter(x=mc_vols, y=mc_rets, mode='markers', 
+                                     marker=dict(color=mc_sharpes, colorscale='Viridis', size=5, colorbar=dict(title="Sharpe")),
+                                     name="Simulações MC"))
+            
+            # Ponto Ótimo Sharpe
+            fig.add_trace(go.Scatter(x=[v_s], y=[r_s], mode='markers', 
+                                     marker=dict(color='red', size=15, symbol='star', line=dict(width=2, color='white')),
+                                     name="Carteira de Tangência (Max Sharpe)"))
+            
+            # Ponto Min Vol
+            r_v, v_v, _ = calcular_stats_carteira(opt_vol.x, rets_anual, matriz_cov, rf_rate)
+            fig.add_trace(go.Scatter(x=[v_v], y=[r_v], mode='markers', 
+                                     marker=dict(color='white', size=12, symbol='circle', line=dict(width=2, color='blue')),
+                                     name="Mínima Variância"))
+
+            fig.update_layout(xaxis_title="Risco (Volatilidade Anualizada)", yaxis_title="Retorno Esperado Anualizado",
+                              height=600, template="plotly_white", legend=dict(orientation="h", y=-0.2))
             st.plotly_chart(fig, use_container_width=True)
 
-        # Exportação CSV
-        csv = io.StringIO()
-        res_s.to_csv(csv, index=False)
-        st.download_button("📥 Baixar Alocação (CSV)", csv.getvalue(), "portfolio.csv", "text/csv")
+        with tab3:
+            c_a, c_b = st.columns(2)
+            with c_a:
+                st.subheader("Correlação entre Ativos")
+                st.dataframe(correlacao.style.background_gradient(cmap='coolwarm').format("{:.2f}"))
+            with c_b:
+                st.subheader("Retornos Acumulados Individuais")
+                st.line_chart(precos / precos.iloc[0])
 
-st.info("💡 Dica: Para ativos brasileiros, use sempre o sufixo .SA (ex: VALE3.SA).")
+        # Exportação
+        csv = io.StringIO()
+        df_pesos.to_csv(csv, index=False)
+        st.download_button("📥 Baixar Relatório de Alocação (CSV)", csv.getvalue(), "otimizacao_carteira.csv", "text/csv")
+
+else:
+    st.info("💡 Configure os ativos na barra lateral e clique em **Executar** para ver a mágica financeira.")
+    # Exemplo visual de como o app se organiza
+    #
