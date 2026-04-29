@@ -3,14 +3,14 @@
 # ==============================================================================
 # 📦 Importação de bibliotecas
 # ==============================================================================
-import streamlit as st          # Biblioteca principal para apps interativos
-from yahooquery import Ticker   # Para buscar dados históricos do Yahoo Finance
-import pandas as pd             # Manipulação de dados e DataFrames
-import numpy as np              # Operações matemáticas e vetoriais
-import plotly.graph_objects as go # Gráficos customizados
-from datetime import date       # Manipulação de datas
-import io                       # Fluxos de memória para download de CSV
-import scipy.optimize as sco    # Módulo de otimização para encontrar carteiras ótimas
+import streamlit as st          
+from yahooquery import Ticker   
+import pandas as pd             
+import numpy as np              
+import plotly.graph_objects as go 
+from datetime import date       
+import io                       
+import scipy.optimize as sco    
 
 # ==============================================================================
 # ⚙️ Configuração da Página Streamlit
@@ -29,22 +29,18 @@ st.write("⚠️ Esta ferramenta tem fins meramente educativos e não deve ser c
 # ==============================================================================
 
 def random_weights(n):
-    """Gera 'n' pesos aleatórios que somam 1."""
     weights = np.random.rand(n)
     return weights / weights.sum()
 
 def portfolio_return(weights, expected_returns):
-    """Calcula o retorno anual esperado do portfólio."""
     return np.dot(weights, expected_returns)
 
 def portfolio_risk(weights, std_devs, correlation_matrix):
-    """Calcula a volatilidade (risco) anual esperada do portfólio."""
     cov_matrix = np.outer(std_devs, std_devs) * correlation_matrix
     variance = np.dot(weights, np.dot(cov_matrix, weights))
     return np.sqrt(variance)
 
 def sharpe_ratio(portfolio_ret, portfolio_risk, risk_free_rate):
-    """Calcula o Índice de Sharpe (retorno ajustado ao risco)."""
     if portfolio_risk == 0:
         return 0
     return (portfolio_ret - risk_free_rate) / portfolio_risk
@@ -68,7 +64,6 @@ def get_portfolio_volatility(weights, expected_returns, cov_matrix):
     return portfolio_risk_scipy(weights, cov_matrix)
 
 def calculate_historical_var_cvar(portfolio_returns_series, confidence_level=0.95, annualize=False):
-    """Calcula VaR e CVaR (Expected Shortfall) histórico."""
     if not isinstance(portfolio_returns_series, (pd.Series, np.ndarray)):
         portfolio_returns_series = np.array(portfolio_returns_series)
     sorted_returns = np.sort(portfolio_returns_series)
@@ -82,25 +77,30 @@ def calculate_historical_var_cvar(portfolio_returns_series, confidence_level=0.9
     return -var, -cvar
 
 # ==============================================================================
-# 📥 Busca de Dados (Corrigido para estabilidade)
+# 📥 Busca de Dados (VERSÃO CORRIGIDA)
 # ==============================================================================
 
 @st.cache_data(ttl=3600)
 def validate_and_fetch_tickers(input_tickers_list):
-    """Valida se os tickers existem no Yahoo Finance."""
+    """
+    Versão mais robusta: assume que os tickers são válidos e deixa 
+    o erro para a função de histórico, contornando falhas no .price
+    """
     tickers = []
     invalid_tickers = []
     try:
+        # Tenta uma verificação leve apenas para ver se o Yahoo retorna algo
         batch_ticker_obj = Ticker(input_tickers_list)
-        price_data_check = batch_ticker_obj.price
+        # Se falhar o dicionário de preços, tentamos validar pela existência do objeto
         for ticker_symbol in input_tickers_list:
-            if isinstance(price_data_check, dict) and ticker_symbol in price_data_check and 'regularMarketPrice' in price_data_check[ticker_symbol]:
+            # Simplificação: aceitamos o ticker se ele tiver o formato correto
+            if ticker_symbol and len(ticker_symbol) >= 2:
                 tickers.append(ticker_symbol)
             else:
                 invalid_tickers.append(ticker_symbol)
-    except Exception as e:
-        st.error(f"❌ Erro na validação inicial dos tickers: {e}")
-        st.stop()
+    except Exception:
+        # Se houver erro crítico, passamos a lista original e validamos no histórico
+        tickers = input_tickers_list
     return tickers, invalid_tickers
 
 @st.cache_data(ttl=3600)
@@ -110,29 +110,33 @@ def fetch_historical_data(valid_tickers, start_date_str, end_date_str):
         ticker_obj_for_history = Ticker(valid_tickers)
         df = ticker_obj_for_history.history(start=start_date_str, end=end_date_str, interval="1d")
         
-        if isinstance(df, str) or df.empty:
-            st.error("❌ Nenhum dado histórico encontrado para o período e tickers selecionados.")
+        # O Yahooquery às vezes retorna uma string se o erro for do servidor
+        if isinstance(df, str) or df is None or df.empty:
+            st.error("❌ O Yahoo Finance não retornou dados. Verifique os Tickers ou tente um intervalo de datas diferente.")
             st.stop()
 
         df = df.reset_index()
+        
+        # Pivotagem robusta: lida com multi-index e índices simples
         if 'symbol' in df.columns:
             prices = df.pivot(index='date', columns='symbol', values='adjclose')
         else:
+            # Caso de um único ticker onde 'symbol' pode não vir no DataFrame
             prices = df.set_index('date')[['adjclose']]
-            prices.columns = valid_tickers
+            prices.columns = [valid_tickers[0]] if isinstance(valid_tickers, list) else [valid_tickers]
 
         prices = prices.ffill().dropna()
         final_tickers = prices.columns.tolist()
         return prices, final_tickers
     except Exception as e:
-        st.error(f"❌ Erro ao buscar dados históricos: {e}")
+        st.error(f"❌ Erro ao processar dados históricos: {e}")
         st.stop()
 
 @st.cache_data(ttl=3600)
 def perform_optimizations(prices, risk_free_rate, num_portfolios_mc, min_weight_constraint, max_weight_constraint):
     returns = prices.pct_change().dropna()
     if returns.empty:
-        st.error("❌ Dados insuficientes para calcular retornos.")
+        st.error("❌ Dados insuficientes para calcular retornos (precisamos de pelo menos 2 dias de preços).")
         st.stop()
 
     annualization_factor = 252
@@ -248,8 +252,8 @@ if run_button:
     
     with st.spinner("Processando simulações e otimizações..."):
         valid, invalid = validate_and_fetch_tickers(input_tickers)
-        if invalid: st.warning(f"⚠️ Tickers inválidos ou não encontrados: {', '.join(invalid)}")
-        if not valid: st.error("❌ Nenhum ticker válido encontrado."); st.stop()
+        # Mostramos o aviso apenas se houver algo realmente inválido detectado na pré-validação
+        if invalid: st.warning(f"⚠️ Atenção com os tickers: {', '.join(invalid)}")
         
         prices, final_valid = fetch_historical_data(valid, start_date_value.isoformat(), end_date_value.isoformat())
         st.session_state.optimization_results = perform_optimizations(prices, risk_free_rate_input, num_portfolios_value, global_min_weight, global_max_weight)
@@ -295,6 +299,12 @@ if st.session_state.simulation_run and st.session_state.optimization_results:
     st.subheader("Gráfico da Fronteira Eficiente")
     st.plotly_chart(st.session_state.plotly_fig, use_container_width=True)
 
+    # Medidas de Risco
+    st.subheader("Medidas de Risco do Portfólio (VaR & CVaR)")
+    p_rets_opt = res["returns_df"].dot(res["optimal_sharpe_weights_scipy"])
+    v95, cv95 = calculate_historical_var_cvar(p_rets_opt, annualize=True)
+    st.write(f"**Máximo Sharpe:** VaR Anualizado (95%): {v95:.2%} | CVaR Anualizado: {cv95:.2%}")
+
     # Download
     csv_output = io.StringIO()
     pd.DataFrame({'Ativo': res["tickers"], 'Peso Max Sharpe': res["optimal_sharpe_weights_scipy"]}).to_csv(csv_output, index=False)
@@ -303,5 +313,5 @@ if st.session_state.simulation_run and st.session_state.optimization_results:
 # Footer Sidebar
 st.sidebar.markdown("---")
 st.sidebar.header("Sobre este App")
-st.sidebar.info("Desenvolvido por Rafael Grilli Felizardo. Este simulador demonstra a Otimização de Portfólio de Markowitz.")
+st.sidebar.info("Desenvolvido por Rafael Grilli Felizardo.")
 st.sidebar.markdown("© 2025 Rafael Grilli Felizardo")
