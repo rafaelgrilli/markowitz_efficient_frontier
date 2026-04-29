@@ -1,185 +1,265 @@
-import streamlit as st          
-from yahooquery import Ticker   
-import pandas as pd             
-import numpy as np              
-import plotly.graph_objects as go 
-from datetime import date       
-import io                       
-import scipy.optimize as sco    
+# efficient_frontier_portfolio_app.py
+
+import streamlit as st
+from yahooquery import Ticker
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import date
+import io
+import scipy.optimize as sco
 
 # ==============================================================================
-# ⚙️ CONFIGURAÇÃO DA PÁGINA
+# ⚙️ CONFIGURAÇÃO E ESTILO
 # ==============================================================================
-st.set_page_config(page_title="Portfolio Optimization Pro", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Portfolio Analytics Pro", 
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-st.title("📊 Simulador de Portfólio Markowitz Pro") 
-st.write("⚠️ Ferramenta de nível profissional para análise fundamentalista e quantitativa.")
+# CSS para notas explicativas e cards de métricas
+st.markdown("""
+    <style>
+    .nota-explicativa { font-size: 0.88rem; color: #555; font-style: italic; margin-bottom: 20px; line-height: 1.4; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #eee; }
+    h1, h2, h3 { color: #1e3a8a; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("📊 Estação de Trabalho: Análise e Otimização de Portfólio")
+st.write("Versão Consolidada 2026 - Rigor Analítico e Educativo")
+st.write("---")
 
 # ==============================================================================
-# 🔢 FUNÇÕES TÉCNICAS (FINANÇAS AVANÇADAS)
+# 🔢 FUNÇÕES ANALÍTICAS E MATEMÁTICAS
 # ==============================================================================
 
 def calculate_stats(weights, rets_anual, cov_mat, rf):
-    """Calcula Retorno, Volatilidade e Sharpe."""
+    """Calcula estatísticas básicas do portfólio."""
     p_ret = np.sum(rets_anual * weights)
     p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
     p_sharpe = (p_ret - rf) / p_vol if p_vol != 0 else 0
     return p_ret, p_vol, p_sharpe
 
-def calculate_var_cvar(rets_series, weights, conf=0.95):
-    """Calcula VaR e CVaR Histórico Anualizado."""
+def calculate_advanced_metrics(rets_series, weights, rf_diario):
+    """Calcula Sortino, Drawdown, VaR e CVaR."""
     p_rets = rets_series.dot(weights)
+    
+    # Índice de Sortino (Risco de queda)
+    downside_rets = p_rets[p_rets < 0]
+    down_std = np.std(downside_rets) * np.sqrt(252)
+    p_ret_anual = p_rets.mean() * 252
+    sortino = (p_ret_anual - (rf_diario * 252)) / down_std if down_std != 0 else 0
+    
+    # Drawdown Máximo
+    cum_rets = (1 + p_rets).cumprod()
+    peak = cum_rets.cummax()
+    drawdown = (cum_rets - peak) / peak
+    max_dd = drawdown.min()
+    
+    # VaR e CVaR Histórico (95% confiança)
     sorted_rets = np.sort(p_rets)
-    idx = int((1 - conf) * len(sorted_rets))
-    var_d = sorted_rets[idx]
-    cvar_d = sorted_rets[:idx].mean()
-    # Escalonamento pela raiz de 252 dias úteis
-    return -var_d * np.sqrt(252), -cvar_d * np.sqrt(252)
+    idx = int(0.05 * len(sorted_rets))
+    var_95 = -sorted_rets[idx] * np.sqrt(252)
+    cvar_95 = -sorted_rets[:idx].mean() * np.sqrt(252)
+    
+    return sortino, max_dd, var_95, cvar_95
 
-# Funções para o Minimizador SciPy
-def min_func_sharpe(weights, rets_anual, cov_mat, rf):
-    return -calculate_stats(weights, rets_anual, cov_mat, rf)[2]
-
-def min_func_vol(weights, rets_anual, cov_mat, rf):
-    return calculate_stats(weights, rets_anual, cov_mat, rf)[1]
+def risk_parity_objective(weights, cov_mat):
+    """Função objetivo para equalizar a contribuição de risco de cada ativo."""
+    p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
+    marginal_risk = np.dot(cov_mat, weights) / p_vol
+    risk_contribution = weights * marginal_risk
+    target_risk = p_vol / len(weights)
+    return np.sum(np.square(risk_contribution - target_risk))
 
 # ==============================================================================
-# 📥 BUSCA DE DADOS (ROBUSTA)
+# 📥 GESTÃO DE DADOS (YAHOO FINANCE)
 # ==============================================================================
 
 @st.cache_data(ttl=3600)
-def get_clean_data(tickers, start, end):
+def get_consolidated_data(tickers, start, end):
     try:
-        t_obj = Ticker(tickers)
-        data = t_obj.history(start=start, end=end, interval="1d")
-        if data is None or (isinstance(data, pd.DataFrame) and data.empty) or isinstance(data, str):
-            return None, None
-        df = data.reset_index()
-        # Fallback para colunas de preço
+        # Lógica híbrida de benchmark
+        bench = "^BVSP" if any(".SA" in t.upper() for t in tickers) else "^GSPC"
+        full_list = list(set(tickers + [bench]))
+        
+        t_obj = Ticker(full_list)
+        df = t_obj.history(start=start, end=end)
+        
+        if df is None or (isinstance(df, pd.DataFrame) and df.empty) or isinstance(df, str):
+            return None, None, None
+        
+        df = df.reset_index()
         col = 'adjclose' if 'adjclose' in df.columns else 'close'
         prices = df.pivot(index='date', columns='symbol', values=col).ffill().dropna()
-        return prices, prices.columns.tolist()
+        
+        if bench not in prices.columns:
+            return prices, None, None
+            
+        bench_data = prices[bench]
+        assets_data = prices.drop(columns=[bench])
+        return assets_data, bench_data, bench
     except:
-        return None, None
+        return None, None, None
 
 # ==============================================================================
-# 🎛️ INTERFACE DE CONFIGURAÇÃO
+# 🎛️ INTERFACE DO USUÁRIO (WIDGETS)
 # ==============================================================================
 
-st.subheader("Configuração da Estratégia")
-
-with st.expander("❓ Guia de Preenchimento (Brasil vs Exterior)", expanded=False):
+with st.expander("❓ GUIA ANALÍTICO: Como interpretar os indicadores?", expanded=False):
     st.markdown("""
-    * **Mercado Brasileiro (B3):** Use obrigatoriamente o sufixo `.SA` (Ex: `PETR4.SA`, `VALE3.SA`).
-    * **Mercado Americano:** Use o Ticker original (Ex: `AAPL`, `MSFT`, `VOO`).
-    * **Moedas/Crypto:** Use o par com USD (Ex: `BRLUSD=X`, `BTC-USD`).
+    Este simulador utiliza modelos de **Finanças Quantitativas** para otimizar sua alocação.
+    
+    * **Índice de Sharpe:** Mede o retorno excedente por unidade de volatilidade total. Útil para comparar portfólios de perfis similares.
+    * **Índice de Sortino:** Foca no 'risco ruim'. Penaliza apenas as variações negativas, sendo ideal para investidores fundamentalistas.
+    * **VaR (95%):** 'Value at Risk'. Indica que há 95% de chance de sua perda anual não exceder esse valor.
+    * **Max Drawdown:** Mostra a maior queda histórica da carteira. Ajuda a entender a resiliência psicológica necessária.
+    * **Paridade de Risco:** Diferente de Markowitz, aqui o objetivo não é o lucro máximo, mas sim garantir que nenhum ativo domine o risco da carteira sozinho.
     """)
 
-col_t, col_rf = st.columns([2, 1])
-with col_t:
-    t_input = st.text_input("Ativos separados por vírgula:", "PETR4.SA, VALE3.SA, AAPL, MSFT, BTC-USD")
-with col_rf:
-    rf_input = st.number_input("Taxa Livre de Risco (Anual Decimal):", 0.0, 0.3, 0.1075, step=0.0025, format="%.4f")
+col_main, col_side = st.columns([2, 1])
 
-c_d1, c_d2, c_mc = st.columns(3)
-with c_d1:
-    s_date = st.date_input("Início da Análise:", date(2020, 1, 1))
-with c_d2:
-    e_date = st.date_input("Fim da Análise:", date.today())
-with c_mc:
-    n_sim = st.slider("Simulações Monte Carlo:", 1000, 50000, 10000)
-
-st.subheader("Restrições e Short Selling")
-col_sh, col_mi, col_ma = st.columns(3)
-with col_sh:
-    allow_short = st.checkbox("Permitir Venda a Descoberto (Short Selling)", value=False)
-with col_mi:
-    min_weight = st.number_input("Peso Mínimo por Ativo:", -1.0 if allow_short else 0.0, 1.0, -0.2 if allow_short else 0.0)
-with col_ma:
-    max_weight = st.number_input("Peso Máximo por Ativo:", 0.0, 2.0, 1.0)
-
-# ==============================================================================
-# 🚀 EXECUÇÃO DA OTIMIZAÇÃO
-# ==============================================================================
-
-if st.button("📈 Rodar Otimização e Gerar Dashboard", use_container_width=True):
-    t_list = [t.strip().upper() for t in t_input.split(",") if t.strip()]
+with col_main:
+    st.subheader("Configuração do Portfólio")
+    tickers_in = st.text_input(
+        "Ativos (Use .SA para B3. Ex: VALE3.SA, PETR4.SA, AAPL, BTC-USD):", 
+        "VALE3.SA, ITUB4.SA, AAPL, MSFT"
+    )
     
-    with st.spinner("Buscando dados e processando matrizes..."):
-        prices, valid_t = get_clean_data(t_list, s_date.isoformat(), e_date.isoformat())
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        s_date = st.date_input("Início da análise:", date(2021, 1, 1))
+    with c2:
+        e_date = st.date_input("Fim da análise:", date.today())
+    with c3:
+        num_sim = st.slider("Simulações Monte Carlo:", 1000, 20000, 5000)
+
+with col_side:
+    st.subheader("Parâmetros")
+    rf_rate = st.number_input("Taxa Livre de Risco (Anual %):", 0.0, 0.20, 0.1075, step=0.0025, format="%.4f")
+    allow_short = st.checkbox("Permitir Short Selling (Venda a Descoberto)", value=False)
+
+# Restrições granulares (conforme código inicial)
+st.subheader("Restrições de Pesos")
+c_min, c_max = st.columns(2)
+with c_min:
+    min_w = st.number_input("Peso Mínimo por Ativo:", -1.0 if allow_short else 0.0, 1.0, 0.0)
+with c_max:
+    max_w = st.number_input("Peso Máximo por Ativo:", 0.0, 2.0, 1.0)
+
+# ==============================================================================
+# 🚀 EXECUÇÃO E DASHBOARD
+# ==============================================================================
+
+if st.button("📈 GERAR RELATÓRIO CONSOLIDADO", use_container_width=True):
+    t_list = [t.strip().upper() for t in tickers_in.split(",") if t.strip()]
+    
+    with st.spinner("Sincronizando com Yahoo Finance e rodando otimizadores..."):
+        prices, bench_prices, bench_ticker = get_market_data = get_consolidated_data(t_list, s_date.isoformat(), e_date.isoformat())
         
         if prices is not None:
             rets = prices.pct_change().dropna()
             rets_a = rets.mean() * 252
             cov_a = rets.cov() * 252
-            n_assets = len(valid_t)
+            n_assets = len(prices.columns)
+            rf_d = rf_rate / 252
 
-            # --- 1. Monte Carlo ---
-            mc_res = np.zeros((3, n_sim))
-            for i in range(n_sim):
-                if allow_short:
-                    w = np.random.uniform(min_weight, max_weight, n_assets)
-                else:
-                    w = np.random.random(n_assets)
-                w /= np.sum(w)
-                r, v, s = calculate_stats(w, rets_a, cov_a, rf_input)
-                mc_res[0,i], mc_res[1,i], mc_res[2,i] = r, v, s
-
-            # --- 2. Otimização SciPy ---
-            bnds = tuple((min_weight, max_weight) for _ in range(n_assets))
+            # Otimização Markowitz (Max Sharpe)
+            bnds = tuple((min_w, max_w) for _ in range(n_assets))
             cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
             init = n_assets * [1./n_assets]
             
-            # Execução dos minimizadores
-            opt_sharpe = sco.minimize(min_func_sharpe, init, args=(rets_a, cov_a, rf_input), method='SLSQP', bounds=bnds, constraints=cons)
-            opt_vol = sco.minimize(min_func_vol, init, args=(rets_a, cov_a, rf_input), method='SLSQP', bounds=bnds, constraints=cons)
-
-            # --- 3. Dashboard de Resultados ---
-            st.write("---")
-            res1, res2 = st.columns(2)
+            opt_s = sco.minimize(lambda w: -calculate_stats(w, rets_a, cov_a, rf_rate)[2], init, method='SLSQP', bounds=bnds, constraints=cons)
             
-            with res1:
-                st.subheader("🎯 Máximo Sharpe (Tangência)")
-                ws = opt_sharpe.x
-                rs, vs, ss = calculate_stats(ws, rets_a, cov_a, rf_input)
-                vars, cvs = calculate_var_cvar(rets, ws)
-                st.metric("Retorno Esperado", f"{rs:.2%}")
-                st.metric("Volatilidade (Risco)", f"{vs:.2%}")
-                st.write(f"**Sharpe:** {ss:.2f} | **VaR:** {vars:.2%} | **CVaR:** {cvs:.2%}")
-                st.table(pd.DataFrame({'Ativo': valid_t, 'Peso (%)': (ws*100).round(2)}).set_index('Ativo'))
+            # Otimização Paridade de Risco
+            opt_rp = sco.minimize(risk_parity_objective, init, args=(cov_a,), method='SLSQP', bounds=bnds, constraints=cons)
 
-            with res2:
-                st.subheader("🛡️ Mínima Variância")
-                wv = opt_vol.x
-                rv, vv, sv = calculate_stats(wv, rets_a, cov_a, rf_input)
-                varv, cvv = calculate_var_cvar(rets, wv)
-                st.metric("Retorno Esperado", f"{rv:.2%}")
-                st.metric("Volatilidade (Risco)", f"{vv:.2%}")
-                st.write(f"**Sharpe:** {sv:.2f} | **VaR:** {varv:.2%} | **CVaR:** {cvv:.2%}")
-                st.table(pd.DataFrame({'Ativo': valid_t, 'Peso (%)': (wv*100).round(2)}).set_index('Ativo'))
+            # --- RESULTADOS ---
+            st.header("1. Comparativo de Alocação e Risco")
+            
+            tab_s, tab_r = st.tabs(["🎯 Máximo Sharpe (Tangência)", "⚖️ Paridade de Risco"])
+            
+            with tab_s:
+                ws = opt_s.x
+                rs, vs, ss = calculate_stats(ws, rets_a, cov_a, rf_rate)
+                sort_s, dd_s, var_s, cvar_s = calculate_advanced_metrics(rets, ws, rf_d)
+                
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                col_m1.metric("Retorno Esperado", f"{rs:.2%}")
+                col_m2.metric("Volatilidade", f"{vs:.2%}")
+                col_m3.metric("Índice de Sortino", f"{sort_s:.2f}")
+                col_m4.metric("Max Drawdown", f"{dd_s:.2%}")
+                
+                st.write(f"**VaR (95%):** {var_s:.2%} | **CVaR (95%):** {cvar_s:.2%}")
+                st.table(pd.DataFrame({'Peso': ws}, index=prices.columns).style.format("{:.2%}"))
 
-            # --- 4. Visualizações ---
-            st.subheader("Visualização da Fronteira Eficiente")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=mc_res[1,:]*100, y=mc_res[0,:]*100, mode='markers', 
-                                     marker=dict(color=mc_res[2,:], colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe")),
-                                     name="Monte Carlo"))
-            fig.add_trace(go.Scatter(x=[vs*100], y=[rs*100], mode='markers', marker=dict(color='red', size=15, symbol='star', line=dict(width=2, color='white')), name="Max Sharpe"))
-            fig.update_layout(xaxis_title="Volatilidade (%)", yaxis_title="Retorno (%)", template="plotly_white", height=600)
-            st.plotly_chart(fig, use_container_width=True)
+            with tab_r:
+                wr = opt_rp.x
+                rr, vr, sr = calculate_stats(wr, rets_a, cov_a, rf_rate)
+                sort_r, dd_r, var_r, cvar_r = calculate_advanced_metrics(rets, wr, rf_d)
+                
+                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                col_r1.metric("Retorno Esperado", f"{rr:.2%}")
+                col_r2.metric("Volatilidade", f"{vr:.2%}")
+                col_r3.metric("Índice de Sortino", f"{sort_r:.2f}")
+                col_r4.metric("Max Drawdown", f"{dd_r:.2%}")
+                
+                st.write(f"**VaR (95%):** {var_r:.2%} | **CVaR (95%):** {cvar_r:.2%}")
+                st.table(pd.DataFrame({'Peso': wr}, index=prices.columns).style.format("{:.2%}"))
 
-            st.subheader("Análise de Ativos e Alocação")
-            ca, cb = st.columns(2)
-            with ca:
-                st.write("**Matriz de Correlação**")
-                st.dataframe(rets.corr().round(2))
-            with cb:
-                st.write("**Distribuição de Pesos (Portfólio Ótimo)**")
-                # Gráfico de pizza para usabilidade imediata
-                fig_pie = go.Figure(data=[go.Pie(labels=valid_t, values=np.abs(ws).round(4), hole=.3)])
-                st.plotly_chart(fig_pie, use_container_width=True)
+            # --- GRÁFICOS ---
+            st.header("2. Fronteira Eficiente e Backtesting")
+            
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                # Simulação Monte Carlo para o gráfico
+                mc_r, mc_v = [], []
+                for _ in range(num_sim):
+                    w = np.random.random(n_assets); w /= np.sum(w)
+                    mc_r.append(np.sum(rets_a * w)); mc_v.append(np.sqrt(np.dot(w.T, np.dot(cov_a, w))))
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=np.array(mc_v)*100, y=np.array(mc_r)*100, 
+                    mode='markers', 
+                    marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe")),
+                    name="Portfólios Simulados"
+                ))
+                fig.add_trace(go.Scatter(x=[vs*100], y=[rs*100], mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Max Sharpe"))
+                fig.update_layout(
+                    title="Fronteira Eficiente", xaxis_title="Volatilidade (%)", yaxis_title="Retorno (%)",
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5),
+                    margin=dict(r=100)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_g2:
+                # Backtesting vs Benchmark
+                if bench_prices is not None:
+                    bench_rets = bench_prices.pct_change().dropna()
+                    cum_port = (1 + rets.dot(ws)).cumprod() * 10000
+                    cum_bench = (1 + bench_rets).cumprod() * 10000
+                    
+                    fig_back = go.Figure()
+                    fig_back.add_trace(go.Scatter(x=cum_port.index, y=cum_port, name="Meu Portfólio (Max Sharpe)", line=dict(color='#10b981', width=3)))
+                    fig_back.add_trace(go.Scatter(x=cum_bench.index, y=cum_bench, name=f"Mercado ({bench_ticker})", line=dict(color='#94a3b8', dash='dash')))
+                    fig_back.update_layout(title="Crescimento de $10.000", xaxis_title="Data", yaxis_title="Valor Acumulado ($)", legend=dict(orientation="h", y=-0.4))
+                    st.plotly_chart(fig_back, use_container_width=True)
+
+            # Matriz de Correlação
+            st.subheader("3. Matriz de Correlação entre Ativos")
+            st.dataframe(rets.corr().round(2))
+
+            # Download
+            csv = io.StringIO()
+            pd.DataFrame({'Ativo': prices.columns, 'Peso Max Sharpe': ws, 'Peso Risk Parity': wr}).to_csv(csv, index=False)
+            st.download_button("📥 Baixar Relatório de Pesos (CSV)", csv.getvalue(), "portfolio_weights.csv", "text/csv")
 
         else:
-            st.error("Erro ao buscar dados. Verifique se usou .SA para brasileiros e se o período tem dados disponíveis.")
+            st.error("Erro ao buscar dados. Tente ajustar os tickers ou as datas.")
 
-st.sidebar.markdown("© 2026 Rafael Grilli Felizardo - Grilli Research")
+st.sidebar.markdown(f"© 2026 Rafael Grilli Felizardo")
+st.sidebar.info("App Analytics Pro: Estabilidade e Rigor Financeiro.")
