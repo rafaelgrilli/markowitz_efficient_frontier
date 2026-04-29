@@ -10,7 +10,7 @@ import io
 import scipy.optimize as sco
 
 # ==============================================================================
-# ⚙️ CONFIGURAÇÃO E ESTILO
+# ⚙️ CONFIGURAÇÃO E ESTILO (UX REFINADA)
 # ==============================================================================
 st.set_page_config(
     page_title="Portfolio Analytics - Grilli Research", 
@@ -18,12 +18,26 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# CSS Customizado para legibilidade total e design sóbrio
 st.markdown("""
     <style>
-    .nota-metrica { font-size: 0.8rem; color: #666; margin-top: -10px; margin-bottom: 15px; }
-    .instrucao-ticker { font-size: 0.9rem; color: #1e3a8a; font-weight: bold; margin-top: 5px; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 5px; border: 1px solid #eee; }
-    h1, h2, h3 { color: #000000; font-family: 'Segoe UI', sans-serif; }
+    /* Estilo para as métricas - Garante contraste em qualquer tema */
+    [data-testid="stMetric"] {
+        background-color: rgba(128, 128, 128, 0.1);
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    .nota-metrica { font-size: 0.85rem; color: #666; margin-top: -10px; margin-bottom: 20px; font-style: italic; }
+    .instrucao-ticker { 
+        padding: 10px; 
+        border-left: 4px solid #1e3a8a; 
+        background-color: rgba(30, 58, 138, 0.05);
+        font-size: 0.9rem; 
+        color: #1e3a8a; 
+        margin-bottom: 15px;
+    }
+    h1, h2, h3 { font-family: 'Segoe UI', sans-serif; font-weight: 700; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -90,10 +104,13 @@ col_main, col_side = st.columns([2, 1])
 with col_main:
     tickers_in = st.text_input(
         "Ativos para análise (separados por vírgula):", 
-        "VALE3.SA, ITUB4.SA, AAPL, MSFT",
-        help="Insira os tickers como no Yahoo Finance."
+        "VALE3.SA, ITUB4.SA, AAPL, MSFT"
     )
-    st.markdown("<p class='instrucao-ticker'>💡 Brasil: use o ticker + .SA (ex: PETR4.SA) | EUA: use o ticker puro (ex: AAPL)</p>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class='instrucao-ticker'>
+        <b>Guia de Tickers:</b> Brasil: ticker + <b>.SA</b> (ex: <i>PETR4.SA</i>) | EUA: ticker puro (ex: <i>AAPL</i>)
+        </div>
+        """, unsafe_allow_html=True)
     
     c1, c2, c3 = st.columns(3)
     with c1: s_date = st.date_input("Início do período:", date(2021, 1, 1))
@@ -102,7 +119,7 @@ with col_main:
 
 with col_side:
     rf_rate = st.number_input("Taxa Selic/Livre de Risco (Anual %):", 0.0, 0.20, 0.1075, step=0.0025, format="%.4f")
-    allow_short = st.checkbox("Venda a Descoberto (Short)", value=False, help="Permite que os pesos dos ativos sejam negativos.")
+    allow_short = st.checkbox("Venda a Descoberto (Short)", value=False)
 
 st.subheader("Configurações de Alocação")
 c_min, c_max = st.columns(2)
@@ -116,7 +133,7 @@ with c_max: max_w = st.number_input("Peso Máximo por Ativo:", 0.0, 2.0, 1.0)
 if st.button("Gerar Relatório de Otimização", use_container_width=True):
     t_list = [t.strip().upper() for t in tickers_in.split(",") if t.strip()]
     
-    with st.spinner("Sincronizando dados com mercado financeiro..."):
+    with st.spinner("Buscando dados e processando modelos quânticos..."):
         prices, bench_prices, bench_ticker = get_consolidated_data(t_list, s_date.isoformat(), e_date.isoformat())
         
         if prices is not None:
@@ -135,6 +152,7 @@ if st.button("Gerar Relatório de Otimização", use_container_width=True):
             opt_mvp = sco.minimize(lambda w: calculate_stats(w, rets_a, cov_a, rf_rate)[1], init, method='SLSQP', bounds=bnds, constraints=cons)
             opt_rp = sco.minimize(risk_parity_objective, init, args=(cov_a,), method='SLSQP', bounds=bnds, constraints=cons)
 
+            # --- RESULTADOS POR ESTRATÉGIA ---
             st.header("Análise de Resultados")
             tabs = st.tabs(["🎯 Máximo Sharpe", "🛡️ Mínima Variância (MVP)", "⚖️ Paridade de Risco"])
             
@@ -147,23 +165,22 @@ if st.button("Gerar Relatório de Otimização", use_container_width=True):
                     r, v, s = calculate_stats(w, rets_a, cov_a, rf_rate)
                     sortino, mdd, var, cvar = calculate_advanced_metrics(rets, w, rf_d)
                     
-                    st.write(f"**Estratégia:** {desc}")
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Retorno Esperado", f"{r:.2%}", help="Retorno médio anualizado baseado no histórico.")
-                    c2.metric("Volatilidade", f"{v:.2%}", help="O desvio padrão anualizado. Indica a intensidade da variação de preços.")
-                    c3.metric("Sortino Ratio", f"{sortino:.2f}", help="Indica o retorno excedente por unidade de risco de queda.")
-                    c4.metric("Max Drawdown", f"{mdd:.2%}", help="Maior queda histórica sofrida pelo portfólio no período.")
+                    st.markdown(f"**Estratégia:** {desc}")
                     
-                    st.write(f"**VaR Anualizado (95%):** {var:.2%} | **CVaR:** {cvar:.2%}")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Retorno Esperado", f"{r:.2%}")
+                    m2.metric("Volatilidade", f"{v:.2%}")
+                    m3.metric("Sortino Ratio", f"{sortino:.2f}")
+                    m4.metric("Max Drawdown", f"{mdd:.2%}")
+                    
+                    st.write(f"**Análise de Risco de Cauda:**")
+                    st.write(f"VaR Anualizado (95%): `{var:.2%}` | CVaR (Expected Shortfall): `{cvar:.2%}`")
                     st.markdown(f"<p class='nota-metrica'>Interpretação: Com 95% de confiança, a perda anual não deve exceder {var:.2%}. O CVaR indica a perda média se o VaR for ultrapassado.</p>", unsafe_allow_html=True)
                     st.table(pd.DataFrame({'Peso (%)': (w*100).round(2)}, index=prices.columns))
 
             # --- FRONTEIRA EFICIENTE ---
             st.header("Fronteira Eficiente")
-            st.markdown("""
-            O gráfico abaixo representa a **Fronteira Eficiente**, um conceito da Teoria de Markowitz que mostra o conjunto de portfólios que oferecem o 
-            **maior retorno esperado para cada nível de risco**. Cada ponto colorido é uma combinação aleatória de ativos.
-            """)
+            st.write("Visualização do conjunto de portfólios que oferecem o maior retorno esperado para cada nível de risco.")
             
             mc_r, mc_v = [], []
             for _ in range(n_sim):
@@ -171,35 +188,41 @@ if st.button("Gerar Relatório de Otimização", use_container_width=True):
                 mc_r.append(np.sum(rets_a * w)); mc_v.append(np.sqrt(np.dot(w.T, np.dot(cov_a, w))))
 
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', 
-                                     marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe")), name="Portfólios Simulados"))
-            fig.add_trace(go.Scatter(x=[calculate_stats(opt_sharpe.x, rets_a, cov_a, rf_rate)[1]*100], y=[calculate_stats(opt_sharpe.x, rets_a, cov_a, rf_rate)[0]*100], mode='markers', marker=dict(color='red', size=15, symbol='star', line=dict(width=2, color='white')), name="Max Sharpe"))
+            fig.add_trace(go.Scatter(
+                x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', 
+                marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe")),
+                name="Portfólios Simulados", hovertemplate='Risco: %{x:.2f}%<br>Retorno: %{y:.2f}%'
+            ))
+            fig.add_trace(go.Scatter(x=[v*100], y=[r*100], mode='markers', marker=dict(color='red', size=15, symbol='star', line=dict(width=2, color='white')), name="Max Sharpe"))
             fig.add_trace(go.Scatter(x=[calculate_stats(opt_mvp.x, rets_a, cov_a, rf_rate)[1]*100], y=[calculate_stats(opt_mvp.x, rets_a, cov_a, rf_rate)[0]*100], mode='markers', marker=dict(color='blue', size=12, symbol='diamond', line=dict(width=2, color='white')), name="MVP"))
             
-            fig.update_layout(xaxis_title="Risco (Volatilidade %)", yaxis_title="Retorno Anual Esperado (%)", 
-                              legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5), 
-                              margin=dict(r=100), template="plotly_white")
+            fig.update_layout(
+                xaxis_title="Volatilidade (Risco %)", yaxis_title="Retorno Anual Esperado (%)", 
+                legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5), 
+                margin=dict(r=80, t=50), template="simple_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+            )
             st.plotly_chart(fig, use_container_width=True)
 
             # --- BACKTESTING ---
             if bench_prices is not None:
                 st.header(f"Backtesting Acumulado vs {bench_ticker}")
-                st.markdown(f"""
-                O **Backtest** é uma simulação histórica que testa como o portfólio de **Máximo Sharpe** teria se comportado no passado comparado ao benchmark do mercado. 
-                Aqui, mostramos o crescimento hipotético de **$10.000** investidos no início do período selecionado.
-                """)
+                st.write(f"Simulação de crescimento de um capital hipotético de **$10.000** investidos no início do período na carteira de **Máximo Sharpe**.")
                 
                 cum_port = (1 + rets.dot(opt_sharpe.x)).cumprod() * 10000
                 cum_bench = (1 + bench_prices.pct_change().dropna()).cumprod() * 10000
+                
                 fig_b = go.Figure()
-                fig_b.add_trace(go.Scatter(x=cum_port.index, y=cum_port, name="Meu Portfólio (Max Sharpe)", line=dict(color='black', width=3)))
-                fig_b.add_trace(go.Scatter(x=cum_bench.index, y=cum_bench, name=f"Referência ({bench_ticker})", line=dict(color='gray', dash='dash')))
-                fig_b.update_layout(xaxis_title="Período", yaxis_title="Capital Acumulado ($)", legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="center", x=0.5), template="plotly_white")
+                fig_b.add_trace(go.Scatter(x=cum_port.index, y=cum_port, name="Meu Portfólio (Max Sharpe)", line=dict(color='#1e3a8a', width=3)))
+                fig_b.add_trace(go.Scatter(x=cum_bench.index, y=cum_bench, name=f"Referência ({bench_ticker})", line=dict(color='#94a3b8', dash='dash')))
+                fig_b.update_layout(
+                    xaxis_title="Período", yaxis_title="Capital Acumulado ($)", 
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5),
+                    template="simple_white", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+                )
                 st.plotly_chart(fig_b, use_container_width=True)
 
             st.subheader("Matriz de Correlação")
-            st.markdown("A correlação indica como os ativos se movem uns em relação aos outros. Valores perto de 1 indicam movimentos iguais; perto de 0 ou negativos indicam diversificação eficiente.")
-            st.dataframe(rets.corr().round(2))
+            st.dataframe(rets.corr().round(2), use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 Rafael Grilli Felizardo - Grilli Research")
