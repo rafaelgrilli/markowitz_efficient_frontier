@@ -1,46 +1,50 @@
 # streamlit_app.py
 
 # ==============================================================================
-# 📦 Import necessary libraries
+# 📦 Importação de bibliotecas
 # ==============================================================================
-import streamlit as st          # Streamlit library for building interactive web apps
-from yahooquery import Ticker   # For fetching historical stock data from Yahoo Finance
-import pandas as pd             # For data manipulation and analysis, especially DataFrames
-import numpy as np              # For numerical operations, especially array manipulations
-import plotly.graph_objects as go # Plotly for more customized graphs
-from datetime import date       # For handling date inputs
-import io                       # For handling in-memory binary streams (used for CSV download)
-import scipy.optimize as sco    # SciPy's optimization module for finding precise optimal portfolios
+import streamlit as st          # Biblioteca principal para apps interativos
+from yahooquery import Ticker   # Para buscar dados históricos do Yahoo Finance
+import pandas as pd             # Manipulação de dados e DataFrames
+import numpy as np              # Operações matemáticas e vetoriais
+import plotly.graph_objects as go # Gráficos customizados
+from datetime import date       # Manipulação de datas
+import io                       # Fluxos de memória para download de CSV
+import scipy.optimize as sco    # Módulo de otimização para encontrar carteiras ótimas
 
 # ==============================================================================
-# ⚙️ Streamlit Page Configuration
+# ⚙️ Configuração da Página Streamlit
 # ==============================================================================
 st.set_page_config(
-    page_title="Portfolio Optimization",      # Title that appears in the browser tab
-    layout="wide",                             # Use wide layout for more horizontal space
-    initial_sidebar_state="collapsed",         # Sidebar starts collapsed, can be expanded
+    page_title="Otimização de Portfólio",      
+    layout="wide",                             
+    initial_sidebar_state="collapsed",         
 )
 
-st.title("📊 Markowitz Portfolio Simulator") # Main title of the application
-st.write("⚠️ This tool is for educational purposes only and should not be considered financial advice. Past performance is not indicative of future results.")
+st.title("📊 Simulador de Portfólio Markowitz") 
+st.write("⚠️ Esta ferramenta tem fins meramente educativos e não deve ser considerada conselho financeiro. Performance passada não é garantia de resultados futuros.")
 
 # ==============================================================================
-# 🔢 Utility Functions
+# 🔢 Funções Utilitárias (Cálculos Financeiros)
 # ==============================================================================
 
 def random_weights(n):
+    """Gera 'n' pesos aleatórios que somam 1."""
     weights = np.random.rand(n)
     return weights / weights.sum()
 
 def portfolio_return(weights, expected_returns):
+    """Calcula o retorno anual esperado do portfólio."""
     return np.dot(weights, expected_returns)
 
 def portfolio_risk(weights, std_devs, correlation_matrix):
+    """Calcula a volatilidade (risco) anual esperada do portfólio."""
     cov_matrix = np.outer(std_devs, std_devs) * correlation_matrix
     variance = np.dot(weights, np.dot(cov_matrix, weights))
     return np.sqrt(variance)
 
 def sharpe_ratio(portfolio_ret, portfolio_risk, risk_free_rate):
+    """Calcula o Índice de Sharpe (retorno ajustado ao risco)."""
     if portfolio_risk == 0:
         return 0
     return (portfolio_ret - risk_free_rate) / portfolio_risk
@@ -64,6 +68,7 @@ def get_portfolio_volatility(weights, expected_returns, cov_matrix):
     return portfolio_risk_scipy(weights, cov_matrix)
 
 def calculate_historical_var_cvar(portfolio_returns_series, confidence_level=0.95, annualize=False):
+    """Calcula VaR e CVaR (Expected Shortfall) histórico."""
     if not isinstance(portfolio_returns_series, (pd.Series, np.ndarray)):
         portfolio_returns_series = np.array(portfolio_returns_series)
     sorted_returns = np.sort(portfolio_returns_series)
@@ -77,16 +82,16 @@ def calculate_historical_var_cvar(portfolio_returns_series, confidence_level=0.9
     return -var, -cvar
 
 # ==============================================================================
-# 📥 Data Fetching (FIXED)
+# 📥 Busca de Dados (Corrigido para estabilidade)
 # ==============================================================================
 
 @st.cache_data(ttl=3600)
 def validate_and_fetch_tickers(input_tickers_list):
+    """Valida se os tickers existem no Yahoo Finance."""
     tickers = []
     invalid_tickers = []
     try:
         batch_ticker_obj = Ticker(input_tickers_list)
-        # Fix: Using 'price' can be unstable, checking keys is safer
         price_data_check = batch_ticker_obj.price
         for ticker_symbol in input_tickers_list:
             if isinstance(price_data_check, dict) and ticker_symbol in price_data_check and 'regularMarketPrice' in price_data_check[ticker_symbol]:
@@ -94,22 +99,22 @@ def validate_and_fetch_tickers(input_tickers_list):
             else:
                 invalid_tickers.append(ticker_symbol)
     except Exception as e:
-        st.error(f"❌ Error during initial ticker validation: {e}")
+        st.error(f"❌ Erro na validação inicial dos tickers: {e}")
         st.stop()
     return tickers, invalid_tickers
 
 @st.cache_data(ttl=3600)
 def fetch_historical_data(valid_tickers, start_date_str, end_date_str):
+    """Busca histórico de preços de fechamento ajustado."""
     try:
         ticker_obj_for_history = Ticker(valid_tickers)
         df = ticker_obj_for_history.history(start=start_date_str, end=end_date_str, interval="1d")
         
         if isinstance(df, str) or df.empty:
-            st.error("❌ No data found on Yahoo Finance. Try adjusting the date range.")
+            st.error("❌ Nenhum dado histórico encontrado para o período e tickers selecionados.")
             st.stop()
 
         df = df.reset_index()
-        # Fix: handle single vs multi-ticker dataframes
         if 'symbol' in df.columns:
             prices = df.pivot(index='date', columns='symbol', values='adjclose')
         else:
@@ -120,14 +125,14 @@ def fetch_historical_data(valid_tickers, start_date_str, end_date_str):
         final_tickers = prices.columns.tolist()
         return prices, final_tickers
     except Exception as e:
-        st.error(f"❌ Error fetching historical data: {e}")
+        st.error(f"❌ Erro ao buscar dados históricos: {e}")
         st.stop()
 
 @st.cache_data(ttl=3600)
 def perform_optimizations(prices, risk_free_rate, num_portfolios_mc, min_weight_constraint, max_weight_constraint):
     returns = prices.pct_change().dropna()
     if returns.empty:
-        st.error("❌ Not enough data points for returns.")
+        st.error("❌ Dados insuficientes para calcular retornos.")
         st.stop()
 
     annualization_factor = 252
@@ -151,23 +156,21 @@ def perform_optimizations(prices, risk_free_rate, num_portfolios_mc, min_weight_
         portfolio_risks_mc.append(risk)
         portfolio_weights_mc.append(weights)
         sharpe_ratios_mc.append(sr)
-        if (i + 1) % 1000 == 0:
+        if (i + 1) % 1000 == 0 or (i + 1) == num_portfolios_mc:
             progress_bar_mc.progress((i + 1) / num_portfolios_mc)
     progress_bar_mc.empty()
 
-    # Optimal MC points
-    optimal_index_mc = sharpe_ratios_mc.index(max(sharpe_ratios_mc))
-    min_index_mc = portfolio_risks_mc.index(min(portfolio_risks_mc))
-
-    # --- SciPy Optimization ---
+    # Otimização via SciPy
     bounds = tuple((min_weight_constraint, max_weight_constraint) for _ in range(num_assets))
     constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
     initial_weights = num_assets * [1./num_assets]
 
-    # Max Sharpe
     opt_sharpe = sco.minimize(neg_sharpe_ratio, initial_weights, args=(expected_returns, cov_matrix, risk_free_rate), method='SLSQP', bounds=bounds, constraints=constraints)
-    # Min Variance
     opt_var = sco.minimize(get_portfolio_volatility, initial_weights, args=(expected_returns, cov_matrix), method='SLSQP', bounds=bounds, constraints=constraints)
+
+    # Pontos Ótimos do Monte Carlo
+    optimal_index_mc = sharpe_ratios_mc.index(max(sharpe_ratios_mc))
+    min_index_mc = portfolio_risks_mc.index(min(portfolio_risks_mc))
 
     return {
         "tickers": tickers, "expected_returns": expected_returns, "std_devs": std_devs,
@@ -184,93 +187,121 @@ def perform_optimizations(prices, risk_free_rate, num_portfolios_mc, min_weight_
     }
 
 # ==============================================================================
-# 🎛️ UI Section (YOUR ORIGINAL LAYOUT)
+# 🎛️ Seção de Interface do Usuário (Layout Original)
 # ==============================================================================
 
-st.subheader("Configuration")
+st.subheader("Configuração")
 
-with st.expander("❓ How to Use This Tool", expanded=False):
+with st.expander("❓ Como Usar Esta Ferramenta", expanded=False):
     st.markdown("""
-    This simulator helps you explore the Efficient Frontier using Markowitz Portfolio Theory.
-    1. **Enter Ticker Symbols**: Provide comma-separated symbols (e.g., `AAPL,MSFT,GOOG` ou `PETR4.SA, VALE3.SA`).
-    ... (Rest of your instructions)
+    Este simulador ajuda você a explorar a Fronteira Eficiente usando a Teoria de Portfólio de Markowitz.
+
+    1. **Insira os Símbolos (Tickers)**: Forneça os códigos das ações ou ETFs separados por vírgula (ex: `AAPL, MSFT, GOOG` ou ativos brasileiros como `PETR4.SA, VALE3.SA, ITUB4.SA`).
+    2. **Selecione o Intervalo de Datas**: Escolha o período histórico para análise dos dados.
+    3. **Taxa Livre de Risco**: Insira a taxa anual livre de risco (ex: `0.1075` para 10,75% Selic). Isso é crucial para o cálculo do Índice de Sharpe.
+    4. **Número de Portfólios**: Ajuste o controle deslizante para a simulação de Monte Carlo. Mais portfólios geram uma fronteira visualmente mais densa, mas levam mais tempo para calcular.
+    5. **Restrições de Portfólio**: Defina pesos mínimos e máximos por ativo e escolha se deseja permitir vendas a descoberto (short sales).
+    6. **Executar Simulação**: Clique no botão para buscar os dados e realizar as otimizações via Monte Carlo e SciPy.
+
+    A ferramenta exibirá estatísticas dos ativos, o gráfico da Fronteira Eficiente, alocações ótimas e medidas de risco como VaR e CVaR.
     """)
 
 col1, col2 = st.columns([2, 1])
 with col1:
-    tickers_input = st.text_input('Enter Ticker Symbols (comma-separated):', 'AAPL,MSFT,GOOG')
+    tickers_input = st.text_input('Insira os Tickers (separados por vírgula):', 'AAPL, MSFT, GOOG')
 with col2:
-    risk_free_rate_input = st.number_input('Risk-Free Rate (annual %):', 0.0, 0.2, 0.04, step=0.001, format="%.3f")
+    risk_free_rate_input = st.number_input('Taxa Livre de Risco (anual decimal):', 0.0, 0.2, 0.04, step=0.001, format="%.3f", help="Ex: 0.04 para 4%")
 
 col3, col4 = st.columns(2)
 with col3:
-    start_date_value = st.date_input('Start Date:', date(2018, 1, 1))
+    start_date_value = st.date_input('Data Inicial:', date(2018, 1, 1))
 with col4:
-    end_date_value = st.date_input('End Date:', date(2024, 12, 31))
+    end_date_value = st.date_input('Data Final:', date.today())
 
-num_portfolios_value = st.slider('Number of Portfolios for Monte Carlo Simulation:', 1000, 50000, 10000, 1000)
+num_portfolios_value = st.slider('Número de Portfólios para Simulação Monte Carlo:', 1000, 50000, 10000, 1000)
 
-st.subheader("Portfolio Constraints")
-allow_short_sales = st.checkbox("Allow Short Sales (Negative Weights)", value=False)
+st.subheader("Restrições do Portfólio")
+allow_short_sales = st.checkbox("Permitir Venda a Descoberto (Pesos Negativos)", value=False)
 min_weight_floor = -2.0 if allow_short_sales else 0.0
 max_weight_ceiling = 2.0 if allow_short_sales else 1.0
 
 col5, col6 = st.columns(2)
 with col5:
-    global_min_weight = st.number_input('Minimum Weight per Asset:', min_weight_floor, 1.0, 0.0 if not allow_short_sales else -0.5, step=0.01, format="%.2f")
+    global_min_weight = st.number_input('Peso Mínimo por Ativo:', min_weight_floor, 1.0, 0.0 if not allow_short_sales else -0.5, step=0.01, format="%.2f")
 with col6:
-    global_max_weight = st.number_input('Maximum Weight per Asset:', 0.0, max_weight_ceiling, 1.0, step=0.01, format="%.2f")
+    global_max_weight = st.number_input('Peso Máximo por Ativo:', 0.0, max_weight_ceiling, 1.0, step=0.01, format="%.2f")
 
 if 'optimization_results' not in st.session_state:
     st.session_state.optimization_results = None
 if 'simulation_run' not in st.session_state:
     st.session_state.simulation_run = False
 
-run_button = st.button("📈 Run Portfolio Optimization")
+run_button = st.button("📈 Executar Otimização de Portfólio")
 
 # ==============================================================================
-# 🚀 MAIN LOGIC
+# 🚀 LÓGICA PRINCIPAL DE EXECUÇÃO
 # ==============================================================================
 
 if run_button:
     st.session_state.simulation_run = True
     input_tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
     
-    with st.spinner("Processing..."):
+    with st.spinner("Processando simulações e otimizações..."):
         valid, invalid = validate_and_fetch_tickers(input_tickers)
-        if invalid: st.warning(f"⚠️ Invalid tickers: {', '.join(invalid)}")
-        if not valid: st.error("❌ No valid tickers."); st.stop()
+        if invalid: st.warning(f"⚠️ Tickers inválidos ou não encontrados: {', '.join(invalid)}")
+        if not valid: st.error("❌ Nenhum ticker válido encontrado."); st.stop()
         
         prices, final_valid = fetch_historical_data(valid, start_date_value.isoformat(), end_date_value.isoformat())
         st.session_state.optimization_results = perform_optimizations(prices, risk_free_rate_input, num_portfolios_value, global_min_weight, global_max_weight)
+        
+        # Construção do Gráfico Plotly
+        res = st.session_state.optimization_results
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=np.array(res["portfolio_risks_mc"])*100, y=np.array(res["portfolio_returns_mc"])*100,
+            mode='markers', marker=dict(color=res["sharpe_ratios_mc"], colorscale='Viridis', showscale=True, title="Sharpe"),
+            name="Monte Carlo"
+        ))
+        fig.add_trace(go.Scatter(
+            x=[res["optimal_sharpe_risk_scipy"]*100], y=[res["optimal_sharpe_return_scipy"]*100],
+            mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Máximo Sharpe (SciPy)"
+        ))
+        fig.update_layout(title="Fronteira Eficiente", xaxis_title="Risco (Volatilidade %)", yaxis_title="Retorno Esperado (%)", template="plotly_white")
+        st.session_state.plotly_fig = fig
 
-# --- Display Results ---
+# --- Exibição de Resultados ---
 if st.session_state.simulation_run and st.session_state.optimization_results:
     res = st.session_state.optimization_results
     
-    st.subheader("Asset Statistics")
-    st.write("📈 Expected Annual Returns (%):")
-    st.dataframe((res["expected_returns"] * 100).round(2).rename("Return (%)"))
-    st.write("📊 Annual Volatility (%):")
-    st.dataframe((res["std_devs"] * 100).round(2).rename("Volatility (%)"))
-    st.write("🔗 Correlation Matrix:")
+    st.subheader("Estatísticas dos Ativos")
+    st.write("📈 Retornos Anuais Esperados (%):")
+    st.dataframe((res["expected_returns"] * 100).round(2).rename("Retorno (%)"))
+    st.write("📊 Volatilidade Anual (%):")
+    st.dataframe((res["std_devs"] * 100).round(2).rename("Volatilidade (%)"))
+    st.write("🔗 Matriz de Correlação:")
     st.dataframe(pd.DataFrame(res["correlation_matrix"], index=res["tickers"], columns=res["tickers"]).round(2))
 
-    st.subheader("Optimal Portfolios (SciPy Optimization)")
+    st.subheader("Portfólios Ótimos (Otimização SciPy)")
     col_a, col_b = st.columns(2)
     with col_a:
-        st.write("🚀 **Optimal Risky Portfolio (Max Sharpe):**")
-        st.dataframe(pd.DataFrame({'Ticker': res["tickers"], 'Weight (%)': (res["optimal_sharpe_weights_scipy"] * 100).round(2)}))
-        st.write(f"Return: {res['optimal_sharpe_return_scipy']*100:.2f}% | Vol: {res['optimal_sharpe_risk_scipy']*100:.2f}% | Sharpe: {res['max_sharpe_ratio_scipy']:.2f}")
+        st.write("🚀 **Carteira de Máximo Sharpe:**")
+        st.dataframe(pd.DataFrame({'Ativo': res["tickers"], 'Peso (%)': (res["optimal_sharpe_weights_scipy"] * 100).round(2)}))
+        st.write(f"Retorno: {res['optimal_sharpe_return_scipy']*100:.2f}% | Risco: {res['optimal_sharpe_risk_scipy']*100:.2f}% | Sharpe: {res['max_sharpe_ratio_scipy']:.2f}")
     with col_b:
-        st.write("🌟 **Minimum Variance Portfolio:**")
-        st.dataframe(pd.DataFrame({'Ticker': res["tickers"], 'Weight (%)': (res["min_variance_weights_scipy"] * 100).round(2)}))
-        st.write(f"Return: {res['min_variance_return_scipy']*100:.2f}% | Vol: {res['min_variance_risk_scipy']*100:.2f}% | Sharpe: {res['min_variance_sharpe_scipy']:.2f}")
+        st.write("🌟 **Carteira de Mínima Variância:**")
+        st.dataframe(pd.DataFrame({'Ativo': res["tickers"], 'Peso (%)': (res["min_variance_weights_scipy"] * 100).round(2)}))
+        st.write(f"Retorno: {res['min_variance_return_scipy']*100:.2f}% | Risco: {res['min_variance_risk_scipy']*100:.2f}% | Sharpe: {res['min_variance_sharpe_scipy']:.2f}")
 
-    # (Add your Plotly figure code here using res["portfolio_risks_mc"] etc.)
-    # (Add your Risk Measures VaR/CVaR code here)
+    st.subheader("Gráfico da Fronteira Eficiente")
+    st.plotly_chart(st.session_state.plotly_fig, use_container_width=True)
 
-# Sidebar Info
+    # Download
+    csv_output = io.StringIO()
+    pd.DataFrame({'Ativo': res["tickers"], 'Peso Max Sharpe': res["optimal_sharpe_weights_scipy"]}).to_csv(csv_output, index=False)
+    st.download_button(label="📥 Baixar Alocação (CSV)", data=csv_output.getvalue(), file_name="alocacao_portfolio.csv", mime="text/csv")
+
+# Footer Sidebar
 st.sidebar.markdown("---")
-st.sidebar.header("About This App")
-st.sidebar.info("Developed by Rafael Grilli Felizardo...")
+st.sidebar.header("Sobre este App")
+st.sidebar.info("Desenvolvido por Rafael Grilli Felizardo. Este simulador demonstra a Otimização de Portfólio de Markowitz.")
+st.sidebar.markdown("© 2025 Rafael Grilli Felizardo")
