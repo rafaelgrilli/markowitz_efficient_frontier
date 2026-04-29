@@ -22,7 +22,7 @@ st.title("📊 Simulador de Portfólio Markowitz Pro")
 st.write("⚠️ Ferramenta educativa para análise de fronteira eficiente e métricas de risco.")
 
 # ==============================================================================
-# 🔢 FUNÇÕES DE CÁLCULO (MARKOWITZ & RISCO)
+# 🔢 FUNÇÕES DE CÁLCULO
 # ==============================================================================
 
 def calculate_portfolio_performance(weights, expected_returns, cov_matrix, risk_free_rate):
@@ -32,13 +32,11 @@ def calculate_portfolio_performance(weights, expected_returns, cov_matrix, risk_
     return p_ret, p_vol, p_sharpe
 
 def calculate_var_cvar(returns_series, weights, confidence_level=0.95):
-    """Calcula VaR e CVaR Histórico Anualizado."""
     portfolio_returns = returns_series.dot(weights)
     sorted_returns = np.sort(portfolio_returns)
     var_index = int((1 - confidence_level) * len(sorted_returns))
     var_diario = sorted_returns[var_index]
     cvar_diario = sorted_returns[:var_index].mean()
-    # Anualização pela raiz do tempo (sqrt de 252 dias úteis)
     return -var_diario * np.sqrt(252), -cvar_diario * np.sqrt(252)
 
 def neg_sharpe(weights, returns, cov, rf):
@@ -48,14 +46,15 @@ def get_vol(weights, returns, cov, rf):
     return calculate_portfolio_performance(weights, returns, cov, rf)[1]
 
 # ==============================================================================
-# 📥 BUSCA DE DADOS (CORRIGIDA E ROBUSTA)
+# 📥 BUSCA DE DADOS
 # ==============================================================================
 
 @st.cache_data(ttl=3600)
 def get_data(tickers, start, end):
     try:
-        data = Ticker(tickers).history(start=start, end=end, interval="1d")
-        if data is None or isinstance(data, str) or data.empty:
+        t_obj = Ticker(tickers)
+        data = t_obj.history(start=start, end=end, interval="1d")
+        if data is None or (isinstance(data, pd.DataFrame) and data.empty) or isinstance(data, str):
             return None, None
         
         df = data.reset_index()
@@ -63,7 +62,7 @@ def get_data(tickers, start, end):
             prices = df.pivot(index='date', columns='symbol', values='adjclose')
         else:
             prices = df.set_index('date')[['adjclose']]
-            prices.columns = [tickers[0]]
+            prices.columns = [tickers[0]] if isinstance(tickers, list) else [tickers]
             
         prices = prices.ffill().dropna()
         return prices, prices.columns.tolist()
@@ -76,42 +75,39 @@ def get_data(tickers, start, end):
 
 st.subheader("Configuração da Análise")
 
-# Expansor com instruções claras de preenchimento
-with st.expander("❓ Como preencher os ativos (Brasileiros vs Estrangeiros)", expanded=True):
+with st.expander("❓ Guia de Tickers (Brasil vs Mundo)", expanded=False):
     st.markdown("""
-    Para que o simulador encontre os dados corretamente, siga o padrão do Yahoo Finance:
-    
-    * **🇧🇷 Ativos Brasileiros (B3):** Adicione obrigatoriamente o sufixo **.SA**.
-        * Exemplos: `PETR4.SA`, `VALE3.SA`, `ITUB4.SA`, `IVVB11.SA`.
-    * **🇺🇸 Ativos Estrangeiros (EUA):** Use apenas o Ticker original da Nasdaq ou NYSE.
-        * Exemplos: `AAPL` (Apple), `MSFT` (Microsoft), `TSLA` (Tesla), `VOO` (ETF S&P 500).
-    * **💡 Dica de Mistura:** Você pode simular uma carteira global inserindo ambos, separados por vírgula. 
-        * Exemplo: `PETR4.SA, VALE3.SA, AAPL, MSFT, BTC-USD`.
+    * **🇧🇷 Brasil:** Use sufixo **.SA** (ex: `PETR4.SA`, `VALE3.SA`).
+    * **🇺🇸 Internacional:** Use o Ticker puro (ex: `AAPL`, `MSFT`, `BTC-USD`).
     """)
 
 col_tickers, col_rf = st.columns([2, 1])
 with col_tickers:
-    tickers_input = st.text_input(
-        "Digite os Tickers separados por vírgula:", 
-        "PETR4.SA, VALE3.SA, AAPL, MSFT",
-        help="Lembre-se do .SA para ativos brasileiros."
-    )
+    tickers_input = st.text_input("Digite os Tickers separados por vírgula:", "PETR4.SA, VALE3.SA, AAPL, MSFT")
 with col_rf:
-    rf_rate = st.number_input("Taxa Livre de Risco (Anual Decimal):", 0.0, 0.3, 0.1075, step=0.0025, help="Ex: 0.1075 para 10,75% (Selic/CDI)")
+    rf_rate = st.number_input("Taxa Livre de Risco (Decimal):", 0.0, 0.3, 0.1075, step=0.0025)
 
-col_date1, col_date2, col_mc = st.columns(3)
-with col_date1:
+col_d1, col_d2, col_mc = st.columns(3)
+with col_d1:
     start_date = st.date_input("Data Inicial:", date(2020, 1, 1))
-with col_date2:
+with col_d2:
     end_date = st.date_input("Data Final:", date.today())
 with col_mc:
     num_sim = st.slider("Simulações Monte Carlo:", 1000, 20000, 10000)
 
-# Botão de execução centralizado
-if st.button("🚀 Rodar Otimização e Análise de Risco", use_container_width=True):
+st.subheader("Restrições e Short Selling")
+col_short, col_min, col_max = st.columns([1, 1, 1])
+with col_short:
+    allow_short = st.checkbox("Permitir Venda a Descoberto (Short Selling)", value=False)
+with col_min:
+    min_w = st.number_input("Peso Mínimo por Ativo:", -2.0 if allow_short else 0.0, 1.0, -0.5 if allow_short else 0.0)
+with col_max:
+    max_w = st.number_input("Peso Máximo por Ativo:", 0.0, 2.0 if allow_short else 1.0, 1.0)
+
+if st.button("🚀 Rodar Otimização Completa", use_container_width=True):
     ticker_list = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
     
-    with st.spinner("Buscando dados e processando matrizes de covariância..."):
+    with st.spinner("Processando..."):
         prices, valid_tickers = get_data(ticker_list, start_date.isoformat(), end_date.isoformat())
         
         if prices is not None:
@@ -123,65 +119,60 @@ if st.button("🚀 Rodar Otimização e Análise de Risco", use_container_width=
             # --- Monte Carlo ---
             mc_results = np.zeros((3, num_sim))
             for i in range(num_sim):
-                w = np.random.random(num_assets)
+                # Se short for permitido, os pesos podem ser negativos
+                if allow_short:
+                    w = np.random.uniform(min_w, max_w, num_assets)
+                else:
+                    w = np.random.random(num_assets)
                 w /= np.sum(w)
                 ret, vol, shrp = calculate_portfolio_performance(w, exp_ret, cov_mat, rf_rate)
                 mc_results[0,i] = ret
                 mc_results[1,i] = vol
                 mc_results[2,i] = shrp
 
-            # --- Otimização SciPy ---
-            bounds = tuple((0, 1) for _ in range(num_assets))
+            # --- SciPy ---
+            bounds = tuple((min_w, max_w) for _ in range(num_assets))
             constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
             init_guess = num_assets * [1./num_assets]
             
-            # Max Sharpe
             opt_sharpe = sco.minimize(neg_sharpe, init_guess, args=(exp_ret, cov_mat, rf_rate), method='SLSQP', bounds=bounds, constraints=constraints)
-            w_s = opt_sharpe.x
-            ret_s, vol_s, shrp_s = calculate_portfolio_performance(w_s, exp_ret, cov_mat, rf_rate)
-            var_s, cvar_s = calculate_var_cvar(returns, w_s)
-
-            # Min Vol
             opt_vol = sco.minimize(get_vol, init_guess, args=(exp_ret, cov_mat, rf_rate), method='SLSQP', bounds=bounds, constraints=constraints)
-            w_v = opt_vol.x
-            ret_v, vol_v, shrp_v = calculate_portfolio_performance(w_v, exp_ret, cov_mat, rf_rate)
-            var_v, cvar_v = calculate_var_cvar(returns, w_v)
 
-            # ==============================================================================
-            # 📊 DASHBOARD DE RESULTADOS
-            # ==============================================================================
+            # --- Resultados ---
             st.write("---")
+            c1, c2 = st.columns(2)
             
-            col_res1, col_res2 = st.columns(2)
-            with col_res1:
-                st.subheader("🎯 Máximo Sharpe (Tangência)")
-                st.write(f"**Retorno:** {ret_s:.2%} | **Risco:** {vol_s:.2%} | **Sharpe:** {shrp_s:.2f}")
-                st.write(f"**VaR (95%):** {var_s:.2%} | **CVaR (95%):** {cvar_s:.2%}")
-                st.dataframe(pd.DataFrame({'Ativo': valid_tickers, 'Peso (%)': (w_s*100).round(2)}).set_index('Ativo'))
+            with c1:
+                st.subheader("🎯 Máximo Sharpe")
+                w_s = opt_sharpe.x
+                r_s, v_s, s_s = calculate_portfolio_performance(w_s, exp_ret, cov_mat, rf_rate)
+                va_s, cv_s = calculate_var_cvar(returns, w_s)
+                st.write(f"Retorno: {r_s:.2%} | Risco: {v_s:.2%}")
+                st.write(f"VaR (95%): {va_s:.2%} | CVaR: {cv_s:.2%}")
+                st.table(pd.DataFrame({'Ativo': valid_tickers, 'Peso (%)': (w_s*100).round(2)}).set_index('Ativo'))
 
-            with col_res2:
+            with c2:
                 st.subheader("🛡️ Mínima Variância")
-                st.write(f"**Retorno:** {ret_v:.2%} | **Risco:** {vol_v:.2%} | **Sharpe:** {shrp_v:.2f}")
-                st.write(f"**VaR (95%):** {var_v:.2%} | **CVaR (95%):** {cvar_v:.2%}")
-                st.dataframe(pd.DataFrame({'Ativo': valid_tickers, 'Peso (%)': (w_v*100).round(2)}).set_index('Ativo'))
+                w_v = opt_vol.x
+                r_v, v_v, s_v = calculate_portfolio_performance(w_v, exp_ret, cov_mat, rf_rate)
+                va_v, cv_v = calculate_var_cvar(returns, w_v)
+                st.write(f"Retorno: {r_v:.2%} | Risco: {v_v:.2%}")
+                st.write(f"VaR (95%): {va_v:.2%} | CVaR: {cv_v:.2%}")
+                st.table(pd.DataFrame({'Ativo': valid_tickers, 'Peso (%)': (w_v*100).round(2)}).set_index('Ativo'))
 
-            # Gráfico da Fronteira Eficiente
-            st.subheader("Gráfico da Fronteira Eficiente")
+            # Gráfico
             fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=mc_results[1,:]*100, y=mc_results[0,:]*100,
-                mode='markers', marker=dict(color=mc_results[2,:], colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe")),
-                name="Simulações Monte Carlo"
-            ))
-            fig.add_trace(go.Scatter(x=[vol_s*100], y=[ret_s*100], mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Max Sharpe"))
-            fig.update_layout(xaxis_title="Volatilidade (%)", yaxis_title="Retorno Esperado (%)", template="plotly_white")
+            fig.add_trace(go.Scatter(x=mc_results[1,:]*100, y=mc_results[0,:]*100, mode='markers', 
+                                     marker=dict(color=mc_results[2,:], colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe"))))
+            fig.add_trace(go.Scatter(x=[v_s*100], y=[r_s*100], mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Max Sharpe"))
+            fig.update_layout(xaxis_title="Volatilidade (%)", yaxis_title="Retorno (%)", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
-            # Correlação
+            # Correlação (Corrigido: sem dependência de matplotlib)
             st.subheader("Matriz de Correlação")
-            st.dataframe(returns.corr().style.background_gradient(cmap='coolwarm').format("{:.2f}"))
+            st.dataframe(returns.corr().round(2))
 
         else:
-            st.error("❌ Erro ao buscar dados. Verifique os sufixos (.SA para Brasil) ou o intervalo de datas.")
+            st.error("Erro ao buscar dados.")
 
 st.sidebar.markdown("© 2026 Rafael Grilli Felizardo - Grilli Research")
