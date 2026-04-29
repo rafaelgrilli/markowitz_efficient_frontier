@@ -57,24 +57,26 @@ def calculate_risk_contribution(weights, cov_mat):
     risk_contribution = weights * marginal_risk
     return risk_contribution / p_vol 
 
+def risk_parity_objective(weights, cov_mat):
+    """Função objetivo para equalizar a contribuição de risco de cada ativo."""
+    n = len(weights)
+    p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
+    marginal_risk = np.dot(cov_mat, weights) / p_vol
+    risk_contribution = weights * marginal_risk
+    target_risk = p_vol / n
+    return np.sum(np.square(risk_contribution - target_risk))
+
 def calculate_advanced_metrics(rets_series, weights, rf_diario, bench_rets_series):
     p_rets = rets_series.dot(weights)
-    
-    # Sortino Ratio
     downside_rets = p_rets[p_rets < 0]
     down_std = np.std(downside_rets) * np.sqrt(252)
     sortino = (p_rets.mean() * 252 - (rf_diario * 252)) / down_std if down_std > 0 else 0
-    
-    # Beta e Treynor
     covariance = np.cov(p_rets, bench_rets_series)[0, 1]
     bench_variance = np.var(bench_rets_series)
     beta = covariance / bench_variance if bench_variance > 0 else 1
     treynor = (p_rets.mean() * 252 - (rf_diario * 252)) / beta if beta != 0 else 0
-    
-    # Drawdown
     cum_rets = (1 + p_rets).cumprod()
     max_dd = ((cum_rets - cum_rets.cummax()) / cum_rets.cummax()).min()
-    
     return sortino, beta, treynor, max_dd
 
 # ==============================================================================
@@ -140,27 +142,26 @@ if st.button("Executar Relatório de Performance e Risco", use_container_width=T
             
             opt_s = sco.minimize(lambda w: -calculate_stats(w, rets_a, cov_a, rf_rate)[2], init, method='SLSQP', bounds=bnds, constraints=cons)
             opt_v = sco.minimize(lambda w: calculate_stats(w, rets_a, cov_a, rf_rate)[1], init, method='SLSQP', bounds=bnds, constraints=cons)
+            opt_rp = sco.minimize(risk_parity_objective, init, args=(cov_a,), method='SLSQP', bounds=bnds, constraints=cons)
 
             # --- RESULTADOS ---
             st.header("1. Performance e Atribuição de Risco")
-            tabs = st.tabs(["🎯 Máximo Sharpe", "🛡️ Mínima Variância (MVP)"])
+            tabs = st.tabs(["🎯 Máximo Sharpe", "🛡️ Mínima Variância (MVP)", "⚖️ Paridade de Risco"])
             
-            for tab, weights, label in zip(tabs, [opt_s.x, opt_v.x], ["Max Sharpe", "MVP"]):
+            for tab, weights, label in zip(tabs, [opt_s.x, opt_v.x, opt_rp.x], ["Max Sharpe", "MVP", "Risk Parity"]):
                 with tab:
                     r, v, s = calculate_stats(weights, rets_a, cov_a, rf_rate)
                     sortino, beta, treynor, mdd = calculate_advanced_metrics(rets, weights, rf_rate/252, bench_rets)
                     risk_contrib = calculate_risk_contribution(weights, cov_a)
                     
                     c1, c2, c3, c4, c5 = st.columns(5)
-                    c1.metric("Retorno", f"{r:.2%}", help="Retorno médio anualizado.")
-                    c2.metric("Sharpe", f"{s:.2f}", help="Retorno excedente por unidade de volatilidade total.")
-                    c3.metric("Sortino", f"{sortino:.2f}", help="Retorno excedente por volatilidade negativa (downside).")
-                    c4.metric("Beta", f"{beta:.2f}", help=f"Sensibilidade ao benchmark ({bench_name}).")
-                    c5.metric("Treynor", f"{treynor:.2f}", help="Retorno excedente por unidade de risco sistemático (Beta).")
+                    c1.metric("Retorno", f"{r:.2%}")
+                    c2.metric("Sharpe", f"{s:.2f}")
+                    c3.metric("Sortino", f"{sortino:.2f}")
+                    c4.metric("Beta", f"{beta:.2f}")
+                    c5.metric("Treynor", f"{treynor:.2f}")
 
                     st.subheader("Atribuição de Risco vs Alocação de Capital")
-                    st.markdown("<p class='nota-metrica'>Compara o quanto você investiu (Peso) com o quanto cada ativo realmente 'move' o risco da carteira.</p>", unsafe_allow_html=True)
-                    
                     col_t, col_p = st.columns([1, 1])
                     with col_t:
                         st.table(pd.DataFrame({
@@ -172,7 +173,7 @@ if st.button("Executar Relatório de Performance e Risco", use_container_width=T
                             go.Bar(name='Peso Capital', x=prices.columns, y=weights, marker_color='#4169E1'),
                             go.Bar(name='Contrib. Risco', x=prices.columns, y=risk_contrib, marker_color='#FF4500')
                         ])
-                        fig_attr.update_layout(barmode='group', height=350, template="plotly_dark", margin=dict(t=20, b=20))
+                        fig_attr.update_layout(barmode='group', height=350, template="plotly_dark")
                         st.plotly_chart(fig_attr, use_container_width=True)
 
             # --- VISUALIZAÇÕES ---
@@ -180,7 +181,6 @@ if st.button("Executar Relatório de Performance e Risco", use_container_width=T
             cg1, cg2 = st.columns(2)
             
             with cg1:
-                st.markdown("<p class='nota-metrica'><b>Fronteira Eficiente:</b> O limite matemático de retorno para cada nível de risco.</p>", unsafe_allow_html=True)
                 mc_v, mc_r = [], []
                 for _ in range(n_sim):
                     w = np.random.random(n_assets); w /= np.sum(w)
@@ -189,12 +189,11 @@ if st.button("Executar Relatório de Performance e Risco", use_container_width=T
                 
                 fig_fe = go.Figure()
                 fig_fe.add_trace(go.Scatter(x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe"))))
-                fig_fe.add_trace(go.Scatter(x=[v*100], y=[r*100], mode='markers', marker=dict(color='#FFD700', size=15, symbol='star', line=dict(color='white', width=2)), name="Max Sharpe"))
+                fig_fe.add_trace(go.Scatter(x=[calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)[1]*100], y=[calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)[0]*100], mode='markers', marker=dict(color='#FFD700', size=15, symbol='star', line=dict(color='white', width=2)), name="Max Sharpe"))
                 fig_fe.update_layout(xaxis_title="Risco (%)", yaxis_title="Retorno (%)", template="plotly_dark", legend=dict(orientation="h", y=-0.2))
                 st.plotly_chart(fig_fe, use_container_width=True)
 
             with cg2:
-                st.markdown(f"<p class='nota-metrica'><b>Backtest:</b> Crescimento de $10.000 comparado ao benchmark ({bench_name}).</p>", unsafe_allow_html=True)
                 cum_port = (1 + rets.dot(opt_s.x)).cumprod() * 10000
                 cum_bench = (1 + bench_rets).cumprod() * 10000
                 fig_bt = go.Figure()
