@@ -54,7 +54,7 @@ def calculate_risk_contribution(weights, cov_mat):
     p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
     marginal_risk = np.dot(cov_mat, weights) / p_vol
     risk_contribution = weights * marginal_risk
-    return risk_contribution / p_vol # Percentual de contribuição para o risco total
+    return risk_contribution / p_vol 
 
 def calculate_advanced_metrics(rets_series, weights, rf_diario, bench_rets):
     p_rets = rets_series.dot(weights)
@@ -107,7 +107,7 @@ with col_in:
     with c2: e_date = st.date_input("Fim:", date.today())
     with c3: n_sim = st.slider("Monte Carlo:", 1000, 10000, 5000)
 
-with col_side := col_opt:
+with col_opt:
     rf_rate = st.number_input("Taxa Selic/RF (Anual %):", 0.0, 0.2, 0.1075, step=0.0025, format="%.4f")
     allow_short = st.checkbox("Venda a Descoberto", value=False)
     min_w = st.number_input("Peso Mín:", -1.0 if allow_short else 0.0, 1.0, 0.0)
@@ -125,10 +125,12 @@ if st.button("Executar Relatório de Atribuição de Risco", use_container_width
         
         if prices is not None:
             rets = prices.pct_change().dropna()
-            bench_rets = bench_prices.pct_change().dropna()
+            bench_rets_series = bench_prices.pct_change().dropna()
+            
             # Alinhamento de datas
-            common_idx = rets.index.intersection(bench_rets.index)
-            rets, bench_rets = rets.loc[common_idx], bench_rets.loc[common_idx]
+            common_idx = rets.index.intersection(bench_rets_series.index)
+            rets = rets.loc[common_idx]
+            bench_rets_series = bench_rets_series.loc[common_idx]
             
             rets_a, cov_a = rets.mean() * 252, rets.cov() * 252
             n_assets = len(prices.columns)
@@ -148,7 +150,7 @@ if st.button("Executar Relatório de Atribuição de Risco", use_container_width
             for tab, weights, label in zip(tabs, [opt_s.x, opt_v.x], ["Max Sharpe", "MVP"]):
                 with tab:
                     r, v, s = calculate_stats(weights, rets_a, cov_a, rf_rate)
-                    sortino, beta, treynor, mdd = calculate_advanced_metrics(rets, weights, rf_rate/252, bench_rets)
+                    sortino, beta, treynor, mdd = calculate_advanced_metrics(rets, weights, rf_rate/252, bench_rets_series)
                     risk_contrib = calculate_risk_contribution(weights, cov_a)
                     
                     c1, c2, c3, c4, c5 = st.columns(5)
@@ -169,10 +171,10 @@ if st.button("Executar Relatório de Atribuição de Risco", use_container_width
                         st.table(df_attrib)
                     with col_p:
                         fig_attr = go.Figure(data=[
-                            go.Bar(name='Peso Capital', x=prices.columns, y=weights),
-                            go.Bar(name='Contrib. Risco', x=prices.columns, y=risk_contrib)
+                            go.Bar(name='Peso Capital', x=prices.columns, y=weights, marker_color='#4169E1'),
+                            go.Bar(name='Contrib. Risco', x=prices.columns, y=risk_contribution, marker_color='#FF4500')
                         ])
-                        fig_attr.update_layout(barmode='group', height=300, template="plotly_dark", margin=dict(t=20, b=20))
+                        fig_attr.update_layout(barmode='group', height=350, template="plotly_dark", margin=dict(t=20, b=20))
                         st.plotly_chart(fig_attr, use_container_width=True)
 
             # --- GRÁFICOS ---
@@ -180,7 +182,6 @@ if st.button("Executar Relatório de Atribuição de Risco", use_container_width
             cg1, cg2 = st.columns(2)
             
             with cg1:
-                # Simulação Monte Carlo
                 mc_v, mc_r = [], []
                 for _ in range(n_sim):
                     w = np.random.random(n_assets); w /= np.sum(w)
@@ -189,19 +190,21 @@ if st.button("Executar Relatório de Atribuição de Risco", use_container_width
                 
                 fig_fe = go.Figure()
                 fig_fe.add_trace(go.Scatter(x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe"))))
-                fig_fe.add_trace(go.Scatter(x=[v*100 for _, v, _ in [calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)]], y=[r*100 for r, _, _ in [calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)]], mode='markers', marker=dict(color='#FFD700', size=15, symbol='star', line=dict(color='white', width=2)), name="Max Sharpe"))
+                fig_fe.add_trace(go.Scatter(x=[calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)[1]*100], y=[calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)[0]*100], mode='markers', marker=dict(color='#FFD700', size=15, symbol='star', line=dict(color='white', width=2)), name="Max Sharpe"))
                 fig_fe.update_layout(xaxis_title="Risco (%)", yaxis_title="Retorno (%)", template="plotly_dark", legend=dict(orientation="h", y=-0.2))
                 st.plotly_chart(fig_fe, use_container_width=True)
 
             with cg2:
-                # Backtest (Cores de alto contraste)
                 cum_port = (1 + rets.dot(opt_s.x)).cumprod() * 10000
-                cum_bench = (1 + bench_rets).cumprod() * 10000
+                cum_bench = (1 + bench_rets_series).cumprod() * 10000
                 fig_bt = go.Figure()
                 fig_bt.add_trace(go.Scatter(x=cum_port.index, y=cum_port, name="Portfólio (Max Sharpe)", line=dict(color='#00FFFF', width=3)))
                 fig_bt.add_trace(go.Scatter(x=cum_bench.index, y=cum_bench, name=f"Benchmark ({bench_name})", line=dict(color='#FF4500', dash='dot', width=2)))
                 fig_bt.update_layout(title="Crescimento de Capital ($10k)", template="plotly_dark", legend=dict(orientation="h", y=-0.2))
                 st.plotly_chart(fig_bt, use_container_width=True)
+
+            st.subheader("3. Matriz de Correlação")
+            st.dataframe(rets.corr().round(2), use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 Rafael Grilli Felizardo - Grilli Research")
