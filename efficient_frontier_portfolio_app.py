@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 from yahooquery import Ticker
 import pandas as pd
@@ -1022,4 +1021,3 @@ st.sidebar.markdown(
     "Toda decisão de alocação deve considerar o perfil de risco, "
     "horizonte e objetivos específicos do investidor."
 )
-```
