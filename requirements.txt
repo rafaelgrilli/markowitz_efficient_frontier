@@ -5,4 +5,5 @@ numpy
 plotly
 scipy
 scikit-learn
+matplotlib
 kaleido # Required for fig.to_image(format="png")
