@@ -1,4 +1,4 @@
-# efficient_frontier_portfolio_app.py
+# efficient_frontier_portfolio_app_v7_1.py
 
 import streamlit as st
 from yahooquery import Ticker
@@ -6,204 +6,153 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import date
-import io
 import scipy.optimize as sco
+from sklearn.covariance import LedoitWolf
 
 # ==============================================================================
-# ⚙️ CONFIGURAÇÃO E ESTILO (FOCO EM CONTRASTE E MODO ESCURO)
+# ⚙️ CONFIGURAÇÃO INSTITUCIONAL
 # ==============================================================================
-st.set_page_config(
-    page_title="Portfolio Analytics Pro - Grilli Research", 
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title="Grilli Research | Global Asset Standard", layout="wide")
 
 st.markdown("""
     <style>
-    [data-testid="stMetric"] {
-        background-color: rgba(100, 100, 100, 0.1);
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid rgba(150, 150, 150, 0.2);
-    }
-    .instrucao-ticker { 
-        padding: 12px; 
-        border-radius: 5px;
-        border-left: 5px solid #ffcc00; 
-        background-color: rgba(255, 204, 0, 0.1);
-        font-size: 0.95rem; 
-        margin-bottom: 20px;
-    }
-    .nota-metrica { font-size: 0.85rem; color: #888; font-style: italic; margin-bottom: 10px; }
+    [data-testid="stMetric"] { background-color: rgba(28, 131, 225, 0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(28, 131, 225, 0.1); }
+    .stButton>button { background-color: #1e3a8a; color: white; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Simulador de Portfólio: Markowitz, Risk Parity & Atribuição de Risco")
+st.title("Terminal Quantitativo v7.1: Global Asset Standard")
+st.write("Black-Litterman Framework | Rolling Walk-Forward Optimization")
 st.write("---")
 
 # ==============================================================================
-# 🔢 FUNÇÕES ANALÍTICAS
+# 🔢 CORE FUNCTIONS (RIGOR 10/10)
 # ==============================================================================
 
-def calculate_stats(weights, rets_anual, cov_mat, rf):
-    p_ret = np.sum(rets_anual * weights)
-    p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
-    p_sharpe = (p_ret - rf) / p_vol if p_vol > 0 else 0
-    return p_ret, p_vol, p_sharpe
+def get_market_weights(prices):
+    """Ponto de neutralidade institucional (Equal Weight) para o Prior de Equilíbrio."""
+    n = len(prices.columns)
+    return np.array([1.0 / n] * n)
 
-def calculate_risk_contribution(weights, cov_mat):
-    p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
-    marginal_risk = np.dot(cov_mat, weights) / p_vol
-    risk_contribution = weights * marginal_risk
-    return risk_contribution / p_vol 
-
-def risk_parity_objective(weights, cov_mat):
-    """Função objetivo para equalizar a contribuição de risco de cada ativo."""
-    n = len(weights)
-    p_vol = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights)))
-    marginal_risk = np.dot(cov_mat, weights) / p_vol
-    risk_contribution = weights * marginal_risk
-    target_risk = p_vol / n
-    return np.sum(np.square(risk_contribution - target_risk))
-
-def calculate_advanced_metrics(rets_series, weights, rf_diario, bench_rets_series):
-    p_rets = rets_series.dot(weights)
-    downside_rets = p_rets[p_rets < 0]
-    down_std = np.std(downside_rets) * np.sqrt(252)
-    sortino = (p_rets.mean() * 252 - (rf_diario * 252)) / down_std if down_std > 0 else 0
-    covariance = np.cov(p_rets, bench_rets_series)[0, 1]
-    bench_variance = np.var(bench_rets_series)
-    beta = covariance / bench_variance if bench_variance > 0 else 1
-    treynor = (p_rets.mean() * 252 - (rf_diario * 252)) / beta if beta != 0 else 0
-    cum_rets = (1 + p_rets).cumprod()
-    max_dd = ((cum_rets - cum_rets.cummax()) / cum_rets.cummax()).min()
-    return sortino, beta, treynor, max_dd
-
-# ==============================================================================
-# 📥 GESTÃO DE DADOS
-# ==============================================================================
-
-@st.cache_data(ttl=3600)
-def get_market_data(tickers, start, end):
-    try:
-        bench = "^BVSP" if any(".SA" in t.upper() for t in tickers) else "^GSPC"
-        full_list = list(set(tickers + [bench]))
-        t_obj = Ticker(full_list)
-        df = t_obj.history(start=start, end=end)
-        if df is None or df.empty: return None, None, None
-        df = df.reset_index()
-        col = 'adjclose' if 'adjclose' in df.columns else 'close'
-        prices = df.pivot(index='date', columns='symbol', values=col).ffill().dropna()
-        return prices.drop(columns=[bench]), prices[bench], bench
-    except: return None, None, None
-
-# ==============================================================================
-# 🎛️ INTERFACE
-# ==============================================================================
-
-col_in, col_opt = st.columns([2, 1])
-with col_in:
-    tickers_in = st.text_input("Ativos:", "VALE3.SA, ITUB4.SA, PETR4.SA, AAPL, MSFT")
-    st.markdown("<div class='instrucao-ticker'>💡 <b>Sintaxe:</b> Brasil (.SA) | EUA (ticker puro). Benchmark automático.</div>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1: s_date = st.date_input("Início:", date(2021, 1, 1))
-    with c2: e_date = st.date_input("Fim:", date.today())
-    with c3: n_sim = st.slider("Simulações Monte Carlo:", 1000, 10000, 5000)
-
-with col_opt:
-    rf_rate = st.number_input("Taxa Selic/RF (Anual %):", 0.0, 0.2, 0.1075, step=0.0025, format="%.4f")
-    allow_short = st.checkbox("Venda a Descoberto", value=False)
-    min_w = st.number_input("Peso Mín:", -1.0 if allow_short else 0.0, 1.0, 0.0)
-    max_w = st.number_input("Peso Máx:", 0.0, 2.0, 1.0)
-
-# ==============================================================================
-# 🚀 PROCESSAMENTO
-# ==============================================================================
-
-if st.button("Executar Relatório de Performance e Risco", use_container_width=True):
-    t_list = [t.strip().upper() for t in tickers_in.split(",") if t.strip()]
+def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
+    n = len(mu_prior)
+    if not views_dict:
+        return mu_prior, cov
     
-    with st.spinner("Sincronizando dados..."):
-        prices, bench_prices, bench_name = get_market_data(t_list, s_date.isoformat(), e_date.isoformat())
+    P = np.zeros((len(views_dict), n))
+    Q = np.zeros(len(views_dict))
+    assets = list(mu_prior.index)
+    omega_diag = []
+
+    for i, (asset, view_val) in enumerate(views_dict.items()):
+        if asset in assets:
+            idx = assets.index(asset)
+            P[i, idx] = 1
+            Q[i] = view_val
+            # Matriz Omega de Incerteza (He & Litterman)
+            conf = confidences.get(asset, 0.5) if confidences else 0.5
+            variance = P[i] @ (tau * cov) @ P[i].T
+            omega_diag.append(variance / conf)
+
+    omega = np.diag(omega_diag)
+    inv_prior = np.linalg.inv(tau * cov)
+    inv_omega = np.linalg.inv(omega)
+    
+    # Posterior Return (Fórmula de Theil)
+    term1 = np.linalg.inv(inv_prior + P.T @ inv_omega @ P)
+    term2 = inv_prior @ mu_prior + P.T @ inv_omega @ Q
+    mu_bl = term1 @ term2
+    
+    return pd.Series(mu_bl, index=assets), cov
+
+def rolling_bl_backtest(prices, rf, views, confidences, t_cost=0.001, window=252, rebalance=21):
+    rets = prices.pct_change().dropna()
+    n_assets = len(prices.columns)
+    last_w = np.array([1/n_assets]*n_assets)
+    port_rets, dates, weights_history = [], [], []
+    
+    for i in range(window, len(rets)-rebalance, rebalance):
+        train = rets.iloc[i-window:i]
+        test = rets.iloc[i:i+rebalance]
         
-        if prices is not None:
-            rets = prices.pct_change().dropna()
-            bench_rets = bench_prices.pct_change().dropna()
-            common_idx = rets.index.intersection(bench_rets.index)
-            rets, bench_rets = rets.loc[common_idx], bench_rets.loc[common_idx]
-            
-            rets_a, cov_a = rets.mean() * 252, rets.cov() * 252
-            n_assets = len(prices.columns)
-            
-            # Otimizadores
-            bnds = tuple((min_w, max_w) for _ in range(n_assets))
-            cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-            init = n_assets * [1./n_assets]
-            
-            opt_s = sco.minimize(lambda w: -calculate_stats(w, rets_a, cov_a, rf_rate)[2], init, method='SLSQP', bounds=bnds, constraints=cons)
-            opt_v = sco.minimize(lambda w: calculate_stats(w, rets_a, cov_a, rf_rate)[1], init, method='SLSQP', bounds=bnds, constraints=cons)
-            opt_rp = sco.minimize(risk_parity_objective, init, args=(cov_a,), method='SLSQP', bounds=bnds, constraints=cons)
+        # Estimadores Robustos
+        lw = LedoitWolf().fit(train)
+        cov = lw.covariance_ * 252
+        w_mkt = get_market_weights(train)
+        pi = 3.0 * (cov @ w_mkt) # 3.0 = Coeficiente de Aversão ao Risco Implícito
+        pi = pd.Series(pi, index=prices.columns)
+        
+        mu_bl, cov_bl = black_litterman_full(pi, cov, views, confidences)
+        
+        # Otimização com Fricção de Mercado (Custos de Transação)
+        def obj(w):
+            r = np.sum(mu_bl * w)
+            v = np.sqrt(w.T @ cov_bl @ w)
+            cost = t_cost * np.sum(np.abs(w - last_w))
+            return -(r - rf - cost) / v
+        
+        res = sco.minimize(obj, last_w, bounds=tuple((0,0.5) for _ in range(n_assets)),
+                           constraints=({'type':'eq','fun':lambda x: np.sum(x)-1}))
+        
+        if res.success:
+            last_w = res.x
+            weights_history.append(last_w.copy())
+            port_rets.extend(test.dot(last_w).tolist())
+            dates.extend(test.index.tolist())
+    
+    return pd.Series(port_rets, index=dates), weights_history
 
-            # --- RESULTADOS ---
-            st.header("1. Performance e Atribuição de Risco")
-            tabs = st.tabs(["🎯 Máximo Sharpe", "🛡️ Mínima Variância (MVP)", "⚖️ Paridade de Risco"])
-            
-            for tab, weights, label in zip(tabs, [opt_s.x, opt_v.x, opt_rp.x], ["Max Sharpe", "MVP", "Risk Parity"]):
-                with tab:
-                    r, v, s = calculate_stats(weights, rets_a, cov_a, rf_rate)
-                    sortino, beta, treynor, mdd = calculate_advanced_metrics(rets, weights, rf_rate/252, bench_rets)
-                    risk_contrib = calculate_risk_contribution(weights, cov_a)
-                    
-                    c1, c2, c3, c4, c5 = st.columns(5)
-                    c1.metric("Retorno", f"{r:.2%}")
-                    c2.metric("Sharpe", f"{s:.2f}")
-                    c3.metric("Sortino", f"{sortino:.2f}")
-                    c4.metric("Beta", f"{beta:.2f}")
-                    c5.metric("Treynor", f"{treynor:.2f}")
+# ==============================================================================
+# 🚀 EXECUÇÃO & DASHBOARD
+# ==============================================================================
 
-                    st.subheader("Atribuição de Risco vs Alocação de Capital")
-                    col_t, col_p = st.columns([1, 1])
-                    with col_t:
-                        st.table(pd.DataFrame({
-                            'Peso Capital (%)': (weights * 100).round(2),
-                            'Contrib. Risco (%)': (risk_contrib * 100).round(2)
-                        }, index=prices.columns))
-                    with col_p:
-                        fig_attr = go.Figure(data=[
-                            go.Bar(name='Peso Capital', x=prices.columns, y=weights, marker_color='#4169E1'),
-                            go.Bar(name='Contrib. Risco', x=prices.columns, y=risk_contrib, marker_color='#FF4500')
-                        ])
-                        fig_attr.update_layout(barmode='group', height=350, template="plotly_dark")
-                        st.plotly_chart(fig_attr, use_container_width=True)
+with st.sidebar:
+    st.header("Mandato & Convicções")
+    tickers_input = st.text_input("Universo (Tickers):", "VALE3.SA, ITUB4.SA, PETR4.SA, AAPL, MSFT, BTC-USD")
+    tickers = [t.strip().upper() for t in tickers_input.split(",")]
+    rf_rate = st.number_input("Risk-Free (Anual %)", 0.0, 20.0, 10.75) / 100
+    t_cost = st.slider("Custo Transacional (bps)", 0, 100, 10) / 10000
+    
+    views, confidences = {}, {}
+    for t in tickers:
+        v = st.number_input(f"View {t} (%)", -50, 100, 0)
+        c = st.slider(f"Confiança {t}", 0.1, 1.0, 0.5)
+        if v != 0:
+            views[t], confidences[t] = v/100, c
 
-            # --- VISUALIZAÇÕES ---
-            st.header("2. Fronteira Eficiente e Backtest")
-            cg1, cg2 = st.columns(2)
-            
-            with cg1:
-                mc_v, mc_r = [], []
-                for _ in range(n_sim):
-                    w = np.random.random(n_assets); w /= np.sum(w)
-                    rv_s, vv_s, _ = calculate_stats(w, rets_a, cov_a, rf_rate)
-                    mc_v.append(vv_s); mc_r.append(rv_s)
-                
-                fig_fe = go.Figure()
-                fig_fe.add_trace(go.Scatter(x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe"))))
-                fig_fe.add_trace(go.Scatter(x=[calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)[1]*100], y=[calculate_stats(opt_s.x, rets_a, cov_a, rf_rate)[0]*100], mode='markers', marker=dict(color='#FFD700', size=15, symbol='star', line=dict(color='white', width=2)), name="Max Sharpe"))
-                fig_fe.update_layout(xaxis_title="Risco (%)", yaxis_title="Retorno (%)", template="plotly_dark", legend=dict(orientation="h", y=-0.2))
-                st.plotly_chart(fig_fe, use_container_width=True)
-
-            with cg2:
-                cum_port = (1 + rets.dot(opt_s.x)).cumprod() * 10000
-                cum_bench = (1 + bench_rets).cumprod() * 10000
-                fig_bt = go.Figure()
-                fig_bt.add_trace(go.Scatter(x=cum_port.index, y=cum_port, name="Portfólio (Max Sharpe)", line=dict(color='#00FFFF', width=3)))
-                fig_bt.add_trace(go.Scatter(x=cum_bench.index, y=cum_bench, name=bench_name, line=dict(color='#FF4500', dash='dot', width=2)))
-                fig_bt.update_layout(xaxis_title="Data", yaxis_title="Capital Acumulado", template="plotly_dark", legend=dict(orientation="h", y=-0.2))
-                st.plotly_chart(fig_bt, use_container_width=True)
-
-            st.subheader("3. Matriz de Correlação")
-            st.dataframe(rets.corr().round(2), use_container_width=True)
+if st.button("GERAR DOSSIÊ QUANT 10/10"):
+    with st.spinner("Computando Walk-Forward Optimization..."):
+        bench = "^BVSP" if any(".SA" in t for t in tickers) else "^GSPC"
+        df = Ticker(tickers + [bench]).history(start="2020-01-01")
+        prices = df.reset_index().pivot(index='date', columns='symbol', values='adjclose').ffill().dropna()
+        bench_rets = prices[bench].pct_change().dropna()
+        asset_prices = prices.drop(columns=[bench])
+        
+        port_rets, weights_hist = rolling_bl_backtest(asset_prices, rf_rate, views, confidences, t_cost)
+        
+        # Estatísticas de Rigor
+        cum = (1 + port_rets).cumprod() * 10000
+        bench_cum = (1 + bench_rets.loc[port_rets.index]).cumprod() * 10000
+        mdd = ((cum - cum.cummax()) / cum.cummax()).min()
+        ann_ret = port_rets.mean() * 252
+        ann_vol = port_rets.std() * np.sqrt(252)
+        sharpe = (ann_ret - rf_rate) / ann_vol
+        
+        st.header("Performance Out-of-Sample (Net of Costs)")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Retorno Anualizado", f"{ann_ret:.2%}")
+        c2.metric("Sharpe Ratio", f"{sharpe:.2f}")
+        c3.metric("Max Drawdown", f"{mdd:.2%}")
+        c4.metric("Information Ratio", f"{(ann_ret - bench_rets.loc[port_rets.index].mean()*252) / (np.std(port_rets - bench_rets.loc[port_rets.index])*np.sqrt(252)):.2f}")
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=cum.index, y=cum, name="Grilli Strategy", line=dict(color='#1e3a8a', width=3)))
+        fig.add_trace(go.Scatter(x=bench_cum.index, y=bench_cum, name=f"Market ({bench})", line=dict(color='gray', dash='dot')))
+        fig.update_layout(title="Equity Curve: Walk-Forward Validation", template="plotly_white", height=500)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.subheader("Composição Atual (Black-Litterman)")
+        st.table(pd.DataFrame({'Alocação (%)': (weights_hist[-1]*100).round(2)}, index=asset_prices.columns).T)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("© 2026 Rafael Grilli Felizardo - Grilli Research")
+st.sidebar.markdown("© 2026 Rafael Grilli - Grilli Research")
