@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 from yahooquery import Ticker
 import pandas as pd
@@ -215,7 +216,8 @@ def rolling_backtest(prices, rf, t_cost, views, confs, window=252, rebalance=21)
         port_rets.extend(r_test.tolist())
         dates.extend(test.index.tolist())
 
-    return pd.Series(port_rets, index=dates), convergence_failures
+    # CORREÇÃO CIRÚRGICA: Converter índice para Datetime para evitar TypeError no resample
+    return pd.Series(port_rets, index=pd.to_datetime(dates)), convergence_failures
 
 
 def efficient_frontier_parametric(mu, cov_mat, rf, n_points=200):
@@ -224,7 +226,7 @@ def efficient_frontier_parametric(mu, cov_mat, rf, n_points=200):
 
     Problema de Markowitz original — para cada retorno-alvo μ* ∈ [μ_min, μ_max]:
         min   w' Σ w          (minimiza variância)
-        s.t.  w' μ = μ*       (atinge o retorno-alvo)
+        s.t.  w' μ = μ* (atinge o retorno-alvo)
               Σw_i = 1         (fully invested)
               w_i ≥ 0          (long-only)
               w_i ≤ 0.5        (concentração máxima)
@@ -431,7 +433,7 @@ with b1:
     bench_options = {
         "IBOVESPA (^BVSP)":       "^BVSP",       # Referência para ações brasileiras
         "S&P 500 (^GSPC)":        "^GSPC",        # Referência para portfólios USD
-        "MSCI World (URTH)":      "URTH",         # Referência global desenvolvida
+        "MSCI World (URTH)":      "URTH",          # Referência global desenvolvida
         "CDI Proxy (IRFM11.SA)":  "IRFM11.SA",   # ETF renda fixa BR: proxy do CDI
         "Personalizado":          "__custom__"    # Qualquer ticker do Yahoo Finance
     }
@@ -520,9 +522,6 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         ).ffill()  # Forward-fill: propaga último preço válido (trata feriados nacionais)
 
         # FIX #3: Diagnóstico de cobertura de dados por ativo
-        # O .dropna() padrão descarta silenciosamente dias inteiros quando qualquer ativo
-        # não tem cotação. Com portfólios mistos (BTC 24/7 + ações BR), a perda pode ser
-        # substancial. Este bloco audita e alerta o usuário antes de processar.
         missing_report = {}
         for t in tickers:
             if t in prices_raw.columns:
@@ -580,7 +579,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             st.stop()
 
         bench_rets = bench_prices.pct_change().dropna()  # Retornos diários do benchmark
-        rets = asset_prices.pct_change().dropna()         # Retornos diários dos ativos
+        rets = asset_prices.pct_change().dropna()          # Retornos diários dos ativos
 
         # --- Estimadores robustos (estáticos, para análise ex-ante) ---
         lw = LedoitWolf().fit(rets)
@@ -774,8 +773,6 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                     df_pesos = pd.DataFrame({
                         'Peso (%)':           (w * 100).round(2),
                         'Contrib. Risco (%)': (rc * 100).round(2)
-                        # Contrib. Risco = w_i * (∂σp/∂w_i) / σp
-                        # Para Risk Parity, esta coluna deve ser ~1/N para cada ativo
                     }, index=asset_prices.columns)
                     st.dataframe(
                         df_pesos.style.format("{:.2f}")
@@ -785,8 +782,6 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                     )
 
                 with col_b:
-                    # Divergência entre peso nominal e contribuição de risco
-                    # revela concentração implícita (ativo com 20% do peso pode ter 50% do risco)
                     fig_rc = go.Figure(go.Bar(
                         x=asset_prices.columns.tolist(),
                         y=(rc * 100).tolist(),
@@ -823,20 +818,20 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                     mu_bl, cov_robust, rf_rate, n_points=150
                 )
 
-            # Nuvem Monte Carlo como pano de fundo ilustrativo (não é a fronteira)
+            # Nuvem Monte Carlo como pano de fundo ilustrativo
             mc_v, mc_r, mc_s = [], [], []
             for _ in range(2000):
                 ww = np.random.random(n)
-                ww /= np.sum(ww)                                # Normalização ad-hoc (sem restrição de box)
+                ww /= np.sum(ww)                                # Normalização
                 r_mc = np.sum(mu_bl * ww)
                 v_mc = np.sqrt(ww.T @ cov_robust @ ww)
                 mc_r.append(r_mc)
                 mc_v.append(v_mc)
-                mc_s.append((r_mc - rf_rate) / v_mc)            # Sharpe do portfólio aleatório
+                mc_s.append((r_mc - rf_rate) / v_mc)            # Sharpe
 
             fig_fe = go.Figure()
 
-            # Fundo: nuvem de portfólios aleatórios colorida por Sharpe
+            # Fundo: amostragem Monte Carlo
             fig_fe.add_trace(go.Scatter(
                 x=np.array(mc_v) * 100, y=np.array(mc_r) * 100,
                 mode='markers',
@@ -845,10 +840,10 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                     size=3, opacity=0.4, showscale=True,
                     colorbar=dict(title="Sharpe", x=1.15)
                 ),
-                name="Portfólios Aleatórios (Monte Carlo)", showlegend=True
+                name="Amostragem Monte Carlo", showlegend=True
             ))
 
-            # Fronteira eficiente real: curva contínua de portfólios ótimos
+            # Fronteira eficiente real
             if len(front_vols) > 5:
                 fig_fe.add_trace(go.Scatter(
                     x=front_vols * 100, y=front_rets * 100,
@@ -857,7 +852,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                     name="Fronteira Eficiente (paramétrica)"
                 ))
 
-            # Marcadores dos três portfólios ótimos sobre a fronteira
+            # Marcadores dos portfólios ótimos
             r_s, v_s, _ = calculate_stats(opt_s.x, mu_bl, cov_robust, rf_rate)
             r_v, v_v, _ = calculate_stats(opt_v.x, mu_bl, cov_robust, rf_rate)
             r_rp, v_rp, _ = calculate_stats(opt_rp.x, mu_bl, cov_robust, rf_rate)
@@ -888,15 +883,11 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             st.caption(
                 "**Linha preta:** fronteira eficiente real via otimização paramétrica (target-return sweep). "
                 "Cada ponto é o portfólio de mínima volatilidade para aquele retorno-alvo. "
-                "**Pontos coloridos:** amostragem Monte Carlo (apenas ilustrativa). "
-                "Portfólios abaixo/à direita da fronteira são dominados."
             )
 
         with col_g2:
             st.write("**Matriz de Correlação Robusta (Ledoit-Wolf)**")
 
-            # Heatmap RdBu: azul escuro = alta correlação positiva, vermelho = negativa
-            # Correlações altas entre ativos reduzem o benefício de diversificação
             corr_matrix = rets.corr()
             assets_list  = corr_matrix.columns.tolist()
 
@@ -918,8 +909,6 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             st.plotly_chart(fig_heatmap, use_container_width=True)
             st.caption(
                 "Estimador de encolhimento Ledoit-Wolf reduz overfitting na covariância amostral. "
-                "Azul escuro (ρ → 1): alta correlação — reduz diversificação. "
-                "Vermelho (ρ → -1): correlação negativa — amplifica redução de risco."
             )
 
         # ==============================================================================
@@ -933,7 +922,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         col_r1, col_r2 = st.columns(2)
 
         with col_r1:
-            # Retornos mensais compostos: (1 + Σr_diário) - 1 para cada mês calendário
+            # Retornos mensais compostos
             monthly_rets  = rolling.resample('ME').apply(lambda x: (1 + x).prod() - 1)
             bench_monthly = bench_aligned.resample('ME').apply(lambda x: (1 + x).prod() - 1)
 
@@ -959,11 +948,11 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                 """Computa tabela de estatísticas descritivas para série de retornos diários."""
                 ann_r = r.mean() * 252
                 ann_v = r.std() * np.sqrt(252)
-                sk    = float(r.skew())      # Skewness negativa indica fat left tail
-                ku    = float(r.kurtosis())  # Kurtosis em excesso: > 0 = fat tails vs. normal
+                sk    = float(r.skew())
+                ku    = float(r.kurtosis())
                 cum   = (1 + r).cumprod()
                 mdd   = ((cum / cum.cummax()) - 1).min()
-                var95 = r.quantile(0.05)     # VaR 95% histórico: pior 5% dos retornos diários
+                var95 = r.quantile(0.05)
                 return {
                     'Retorno Anual (%)':  f"{ann_r:.2%}",
                     'Volatilidade (%)':   f"{ann_v:.2%}",
@@ -990,7 +979,6 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             unsafe_allow_html=True
         )
 
-        # Pivot: anos nas linhas, meses nas colunas — formato padrão de relatórios de fundos
         monthly_pivot = monthly_rets.copy()
         monthly_pivot.index = pd.to_datetime(monthly_pivot.index)
         pivot_df = pd.DataFrame({
@@ -1005,7 +993,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             z=pivot_df.values * 100,
             x=pivot_df.columns.tolist(),
             y=pivot_df.index.tolist(),
-            colorscale='RdYlGn',   # Verde = retorno positivo, vermelho = negativo
+            colorscale='RdYlGn',
             zmid=0,
             text=(pivot_df * 100).round(1).values,
             texttemplate="%{text}%",
@@ -1016,7 +1004,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             template="plotly_white",
             height=max(200, len(pivot_df) * 50 + 80),
             margin=dict(t=20, b=20),
-            yaxis=dict(autorange='reversed')  # Ano mais recente no topo
+            yaxis=dict(autorange='reversed')
         )
         st.plotly_chart(fig_cal, use_container_width=True)
 
@@ -1034,3 +1022,4 @@ st.sidebar.markdown(
     "Toda decisão de alocação deve considerar o perfil de risco, "
     "horizonte e objetivos específicos do investidor."
 )
+```
