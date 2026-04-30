@@ -34,7 +34,7 @@ st.write("Black-Litterman Framework | Markowitz Frontier | Walk-Forward Validati
 st.write("---")
 
 # ==============================================================================
-# 🔢 CORE FUNCTIONS (RIGOR TOTAL)
+# 🔢 CORE FUNCTIONS
 # ==============================================================================
 
 def get_market_weights(prices):
@@ -72,30 +72,52 @@ def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
     return pd.Series(mu_bl, index=assets), cov
 
 # ==============================================================================
-# 🎛️ PAINEL DE CONFIGURAÇÃO (CENTRALIZADO)
+# 🎛️ PAINEL DE CONFIGURAÇÃO (CENTRALIZADO COM TOOLTIPS)
 # ==============================================================================
 
 st.markdown("<div class='secao-titulo'>1. PARÂMETROS DE MERCADO E MANDATO</div>", unsafe_allow_html=True)
 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
 
 with c1:
-    tickers_in = st.text_input("Universo de Ativos:", "VALE3.SA, ITUB4.SA, AAPL, MSFT, BTC-USD")
+    tickers_in = st.text_input(
+        "Universo de Ativos:", 
+        "VALE3.SA, ITUB4.SA, AAPL, MSFT, BTC-USD",
+        help="Insira os tickers separados por vírgula. Utilize o sufixo '.SA' para ativos da B3 (Brasil) ou o ticker puro para ativos internacionais (EUA/Crypto)."
+    )
     tickers = [t.strip().upper() for t in tickers_in.split(",")]
 with c2:
-    rf_rate = st.number_input("Risk-Free (Anual %):", 0.0, 20.0, 10.75) / 100
+    rf_rate = st.number_input(
+        "Risk-Free (Anual %):", 
+        0.0, 20.0, 10.75, 
+        help="Taxa livre de risco utilizada para descontar o excesso de retorno (Alpha). Geralmente utiliza-se a Selic para Brasil ou T-Bills para EUA."
+    ) / 100
 with c3:
-    t_cost = st.slider("Custo de Transação (bps):", 0, 100, 10) / 10000
+    t_cost = st.slider(
+        "Custo de Transação (bps):", 
+        0, 100, 10, 
+        help="Fricção de mercado em pontos-base (100bps = 1%). Este valor penaliza o turnover excessivo na função objetivo do otimizador."
+    ) / 10000
 with c4:
-    s_date = st.date_input("Início da Série:", date(2020, 1, 1))
+    s_date = st.date_input(
+        "Início da Série:", 
+        date(2020, 1, 1),
+        help="Data inicial para coleta de dados históricos. Séries mais longas oferecem mais dados, porém podem conter regimes econômicos obsoletos."
+    )
 
 with st.expander("💡 Black-Litterman: Convicções e Nível de Confiança"):
-    st.write("O modelo Black-Litterman ajusta o equilíbrio de mercado com base nas suas views.")
+    st.write("O modelo Black-Litterman combina o equilíbrio de mercado com as suas convicções específicas.")
     v_cols = st.columns(len(tickers) if len(tickers) < 6 else 5)
     views, confs = {}, {}
     for i, t in enumerate(tickers):
         with v_cols[i % len(v_cols)]:
-            v = st.number_input(f"E[R] {t} (%)", -50, 100, 0, key=f"v_{t}")
-            c = st.slider(f"Confiança {t}", 0.1, 1.0, 0.5, key=f"c_{t}")
+            v = st.number_input(
+                f"E[R] {t} (%)", -50, 100, 0, key=f"v_{t}",
+                help=f"Sua expectativa de retorno anualizado para {t}. Se zero, o modelo utilizará o retorno implícito de equilíbrio."
+            )
+            c = st.slider(
+                f"Confiança {t}", 0.1, 1.0, 0.5, key=f"c_{t}",
+                help=f"Grau de certeza na sua view. Quanto maior, mais o modelo se desviará do equilíbrio para seguir sua convicção."
+            )
             if v != 0: views[t], confs[t] = v/100, c
 
 if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
@@ -107,13 +129,11 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         asset_prices = prices.drop(columns=[bench])
         rets = asset_prices.pct_change().dropna()
         
-        # 1. Estimadores Robustos (Ledoit-Wolf + BL)
         lw = LedoitWolf().fit(rets)
         cov_robust = lw.covariance_ * 252
         pi = 3.0 * (cov_robust @ get_market_weights(asset_prices))
         mu_bl, _ = black_litterman_full(pd.Series(pi, index=asset_prices.columns), cov_robust, views, confs)
         
-        # 2. Otimizações
         n = len(asset_prices.columns)
         bnds = tuple((0, 0.5) for _ in range(n))
         cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
@@ -134,9 +154,9 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                 w = opt.x
                 r, v, s = calculate_stats(w, mu_bl, cov_robust, rf_rate)
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Retorno Esperado", f"{r:.2%}", help="Retorno anualizado esperado via Black-Litterman.")
-                c2.metric("Volatilidade", f"{v:.2%}", help="Desvio padrão anualizado robusto (Ledoit-Wolf).")
-                c3.metric("Sharpe Ratio", f"{s:.2f}", help="Retorno excedente por unidade de risco total.")
+                c1.metric("Retorno Esperado", f"{r:.2%}", help="Retorno anualizado esperado combinando Equilíbrio de Mercado e suas Views (Black-Litterman).")
+                c2.metric("Volatilidade", f"{v:.2%}", help="Desvio padrão anualizado da carteira, calculado via matriz de covariância robusta (Ledoit-Wolf).")
+                c3.metric("Sharpe Ratio", f"{s:.2f}", help="Indica quanto de retorno excedente o investidor recebe para cada unidade de risco total assumida.")
                 st.write(f"**Metodologia:** {guia}")
                 st.table(pd.DataFrame({'Peso (%)': (w*100).round(2)}, index=asset_prices.columns).T)
 
@@ -147,8 +167,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         col_g1, col_g2 = st.columns(2)
         
         with col_g1:
-            st.write("**Fronteira Eficiente de Markowitz**")
-            st.markdown("<p class='nota-metrica'>Cada ponto representa uma carteira simulada. A estrela vermelha é o portfólio de Tangência (Max Sharpe).</p>", unsafe_allow_html=True)
+            st.write("**Fronteira Eficiente (Markowitz Robust)**")
             mc_v, mc_r = [], []
             for _ in range(5000):
                 w = np.random.random(n); w /= np.sum(w)
@@ -164,8 +183,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             st.plotly_chart(fig_fe, use_container_width=True)
 
         with col_g2:
-            st.write("**Backtest: Crescimento Acumulado**")
-            st.markdown("<p class='nota-metrica'>Simulação histórica de $10.000 investidos vs o benchmark de mercado.</p>", unsafe_allow_html=True)
+            st.write("**Backtest: Crescimento de $10.000**")
             cum = (1 + rets.dot(opt_s.x)).cumprod() * 10000
             bench_cum = (1 + bench_rets).cumprod() * 10000
             fig_bt = go.Figure()
