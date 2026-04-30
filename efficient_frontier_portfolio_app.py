@@ -1,4 +1,4 @@
-# efficient_frontier_portfolio_app_FINAL_10_10.py
+# efficient_frontier_portfolio_app_FINAL_10_10_FIX.py
 
 import streamlit as st
 from yahooquery import Ticker
@@ -34,11 +34,10 @@ st.write("Black-Litterman Framework | Markowitz Frontier | Walk-Forward Validati
 st.write("---")
 
 # ==============================================================================
-# 🔢 CORE FUNCTIONS (RIGOR TOTAL)
+# 🔢 CORE FUNCTIONS
 # ==============================================================================
 
 def get_market_weights(prices):
-    """Ponto de neutralidade institucional (Inverse Volatility) para o Prior."""
     vols = prices.pct_change().std()
     inv_vol = 1 / vols
     w = inv_vol / inv_vol.sum()
@@ -75,7 +74,6 @@ def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
     return pd.Series(mu_bl, index=assets), cov
 
 def rolling_backtest(prices, rf, t_cost, views, confs, window=252, rebalance=21):
-    """Motor de validação walk-forward (Out-of-Sample) com fricção de custos."""
     rets = prices.pct_change().dropna()
     n_assets = len(prices.columns)
     w_prev = np.array([1/n_assets]*n_assets)
@@ -86,8 +84,6 @@ def rolling_backtest(prices, rf, t_cost, views, confs, window=252, rebalance=21)
         test = rets.iloc[i:i+rebalance]
         lw = LedoitWolf().fit(train)
         cov = lw.covariance_ * 252
-        
-        # Prior de mercado e ajuste Black-Litterman
         w_mkt = get_market_weights(train)
         pi = 3.0 * (cov @ w_mkt)
         mu_bl, cov_bl = black_litterman_full(pd.Series(pi, index=prices.columns), cov, views, confs)
@@ -118,22 +114,27 @@ c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
 
 with c1:
     tickers_in = st.text_input("Universo de Ativos:", "VALE3.SA, ITUB4.SA, AAPL, MSFT, BTC-USD", 
-                               help="Tickers via Yahoo Finance. Brasil: .SA | EUA: puro.")
+                               help="Tickers via Yahoo Finance. Brasil: .SA (PETR4.SA) | EUA: ticker puro (AAPL) | Crypto: Ticker-USD (BTC-USD).")
     tickers = [t.strip().upper() for t in tickers_in.split(",")]
 with c2:
-    rf_rate = st.number_input("Risk-Free (Anual %):", 0.0, 20.0, 10.75, help="Taxa livre de risco para Alpha.") / 100
+    rf_rate = st.number_input("Risk-Free (Anual %):", 0.0, 20.0, 10.75, 
+                               help="Taxa livre de risco (Proxy de CDI/Selic ou T-Bills). É o 'hurdle rate' que define o excesso de retorno (Alpha). O otimizador busca maximizar o retorno acima desta taxa.") / 100
 with c3:
-    t_cost = st.slider("Custo de Transação (bps):", 0, 100, 10, help="Fricção de mercado (100bps = 1%).") / 10000
+    t_cost = st.slider("Custo de Transação (bps):", 0, 100, 10, 
+                       help="Penalidade de turnover. Cada alteração percentual nos pesos entre rebalanceamentos subtrai este valor do retorno esperado. Evita 'overtrading' por ruído estatístico.") / 10000
 with c4:
-    s_date = st.date_input("Início da Série:", date(2020, 1, 1), help="Início da coleta histórica.")
+    s_date = st.date_input("Início da Série:", date(2020, 1, 1), 
+                           help="Data de início para o cálculo da matriz de covariância e retornos. Séries mais longas suavizam outliers, mas podem ignorar mudanças de regime recentes.")
 
 with st.expander("💡 Black-Litterman: Convicções e Nível de Confiança"):
     v_cols = st.columns(len(tickers) if len(tickers) < 6 else 5)
     views, confs = {}, {}
     for i, t in enumerate(tickers):
         with v_cols[i % len(v_cols)]:
-            v = st.number_input(f"E[R] {t} (%)", -50, 100, 0, key=f"v_{t}", help=f"Retorno esperado para {t}.")
-            c = st.slider(f"Confiança {t}", 0.1, 1.0, 0.5, key=f"c_{t}", help="Grau de certeza na sua view.")
+            v = st.number_input(f"E[R] {t} (%)", -50, 100, 0, key=f"v_{t}", 
+                                help=f"Retorno absoluto anualizado esperado para {t}. Se zero, o modelo assume o equilíbrio de mercado (CAPM reverso).")
+            c = st.slider(f"Confiança {t}", 0.1, 1.0, 0.5, key=f"c_{t}", 
+                          help="Peso da sua convicção na fórmula de Theil. Define a incerteza (Omega). 1.0 significa convicção total; 0.1 faz o modelo ignorar quase toda a view.")
             if v != 0: views[t], confs[t] = v/100, c
 
 if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
@@ -145,14 +146,12 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         asset_prices = prices.drop(columns=[bench])
         rets = asset_prices.pct_change().dropna()
         
-        # 1. Estimadores Robustos (Ledoit-Wolf + BL)
         lw = LedoitWolf().fit(rets)
         cov_robust = lw.covariance_ * 252
         w_mkt = get_market_weights(asset_prices)
         pi = 3.0 * (cov_robust @ w_mkt)
         mu_bl, _ = black_litterman_full(pd.Series(pi, index=asset_prices.columns), cov_robust, views, confs)
         
-        # 2. Otimizações Estáticas
         n = len(asset_prices.columns)
         bnds = tuple((0, 0.5) for _ in range(n))
         cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
@@ -160,7 +159,6 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         opt_v = sco.minimize(lambda w: calculate_stats(w, mu_bl, cov_robust, rf_rate)[1], n*[1./n], bounds=bnds, constraints=cons)
         opt_rp = sco.minimize(risk_parity_objective, n*[1./n], args=(cov_robust,), bounds=bnds, constraints=cons)
 
-        # 3. Backtest Rolling (O Coração da Validação)
         rolling = rolling_backtest(asset_prices, rf_rate, t_cost, views, confs)
         bench_aligned = bench_rets.loc[rolling.index]
 
@@ -175,15 +173,15 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         info_ratio = (ann_ret - bench_aligned.mean()*252) / tracking_error
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Retorno Real", f"{ann_ret:.2%}", help="Retorno médio anualizado no backtest rolling.")
-        c2.metric("Sharpe Real", f"{sharpe:.2f}", help="Retorno/Risco realizado net de custos.")
-        c3.metric("Information Ratio", f"{info_ratio:.2f}", help="Alpha gerado por unidade de tracking error.")
-        c4.metric("Max Drawdown", f"{(( (1+rolling).cumprod() / (1+rolling).cumprod().cummax() ) - 1).min():.2%}")
+        c1.metric("Retorno Real", f"{ann_ret:.2%}", help="Retorno médio realizado na simulação walk-forward, já descontando custos de transação.")
+        c2.metric("Sharpe Real", f"{sharpe:.2f}", help="Retorno excedente por unidade de volatilidade realizada. Mede a eficiência real da estratégia.")
+        c3.metric("Information Ratio", f"{info_ratio:.2f}", help="Alpha gerado sobre o benchmark por unidade de Tracking Error. Indica a consistência do gestor frente ao mercado.")
+        c4.metric("Max Drawdown", f"{(( (1+rolling).cumprod() / (1+rolling).cumprod().cummax() ) - 1).min():.2%}", help="Maior perda pico-a-vale observada. Mede o risco de cauda e resiliência da carteira.")
 
         fig_bt = go.Figure()
         fig_bt.add_trace(go.Scatter(x=rolling.index, y=(1+rolling).cumprod()*10000, name="Estratégia (Rolling)", line=dict(color='#1e3a8a', width=3)))
         fig_bt.add_trace(go.Scatter(x=bench_aligned.index, y=(1+bench_aligned).cumprod()*10000, name="Benchmark", line=dict(color='gray', dash='dot')))
-        fig_bt.update_layout(title="Equity Curve: Walk-Forward Validation ($10k Init)", template="plotly_white", height=500)
+        fig_bt.update_layout(title="Equity Curve: Walk-Forward Validation ($10k Init)", template="plotly_white", height=500, legend=dict(orientation="h", y=-0.2, xanchor="center", x=0.5))
         st.plotly_chart(fig_bt, use_container_width=True)
 
         # ==============================================================================
@@ -191,7 +189,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         # ==============================================================================
         st.markdown("<div class='secao-titulo'>3. ANÁLISE DE ALOCAÇÃO E FRONTEIRA</div>", unsafe_allow_html=True)
         tabs = st.tabs(["🎯 Máximo Sharpe", "🛡️ Mínima Variância", "⚖️ Paridade de Risco"])
-        for tab, opt, guia in zip(tabs, [opt_s, opt_v, opt_rp], ["Equilíbrio Risco/Retorno", "Foco em Proteção", "Equilíbrio de Contribuição"]):
+        for tab, opt, guia in zip(tabs, [opt_s, opt_v, opt_rp], ["Portfólio de tangência: otimiza a inclinação da CAL.", "Carteira defensiva: minimiza a variância total da matriz Σ.", "Abordagem risk-budgeting: equaliza a contribuição marginal de risco."]):
             with tab:
                 w = opt.x
                 r, v, s = calculate_stats(w, mu_bl, cov_robust, rf_rate)
@@ -206,9 +204,14 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                 w = np.random.random(n); w /= np.sum(w)
                 mc_r.append(np.sum(mu_bl * w)); mc_v.append(np.sqrt(w.T @ cov_robust @ w))
             fig_fe = go.Figure()
-            fig_fe.add_trace(go.Scatter(x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True)))
-            fig_fe.add_trace(go.Scatter(x=[calculate_stats(opt_s.x, mu_bl, cov_robust, rf_rate)[1]*100], y=[calculate_stats(opt_s.x, mu_bl, cov_robust, rf_rate)[0]*100], mode='markers', marker=dict(color='red', size=15, symbol='star')))
-            fig_fe.update_layout(xaxis_title="Risco (%)", yaxis_title="Retorno (%)", template="plotly_white")
+            fig_fe.add_trace(go.Scatter(x=np.array(mc_v)*100, y=np.array(mc_r)*100, mode='markers', 
+                                         marker=dict(color=(np.array(mc_r)-rf_rate)/np.array(mc_v), colorscale='Viridis', showscale=True, 
+                                         colorbar=dict(title="Sharpe", x=1.15)), showlegend=False))
+            fig_fe.add_trace(go.Scatter(x=[calculate_stats(opt_s.x, mu_bl, cov_robust, rf_rate)[1]*100], 
+                                         y=[calculate_stats(opt_s.x, mu_bl, cov_robust, rf_rate)[0]*100], 
+                                         mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Max Sharpe"))
+            fig_fe.update_layout(xaxis_title="Risco (%)", yaxis_title="Retorno (%)", template="plotly_white", 
+                                 margin=dict(r=150), legend=dict(orientation="h", y=-0.2))
             st.plotly_chart(fig_fe, use_container_width=True)
         
         with col_g2:
