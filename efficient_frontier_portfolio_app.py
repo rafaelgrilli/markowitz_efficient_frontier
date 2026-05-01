@@ -103,7 +103,7 @@ def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
     - views_dict : dict {ticker: retorno_esperado_anualizado}
     - confidences: dict {ticker: confiança 0-1} — escala a incerteza Omega da view
     - tau        : escalar de incerteza do prior (tipicamente 0.01–0.10).
-                   Valores menores tornam o prior mais rígido (menos influenciado pelas views).
+                    Valores menores tornam o prior mais rígido (menos influenciado pelas views).
 
     Fórmula posterior (Theil):
     μ_BL = [(τΣ)⁻¹ + P'Ω⁻¹P]⁻¹ * [(τΣ)⁻¹π + P'Ω⁻¹Q]
@@ -112,8 +112,8 @@ def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
     - P: matriz de seleção (picking matrix) — quais ativos cada view afeta
     - Q: vetor de retornos esperados das views
     - Ω: matriz diagonal de incerteza — Ω_ii = (P_i τΣ P_i') / confiança
-         Confiança alta → Ω pequeno → view domina o prior
-         Confiança baixa → Ω grande → prior domina a view
+          Confiança alta → Ω pequeno → view domina o prior
+          Confiança baixa → Ω grande → prior domina a view
     """
     n = len(mu_prior)
     if not views_dict:
@@ -128,7 +128,7 @@ def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
     for i, (asset, view_val) in enumerate(views_dict.items()):
         if asset in assets:
             idx = assets.index(asset)
-            P[i, idx] = 1       # View absoluta: afeta apenas o ativo especificado
+            P[i, idx] = 1        # View absoluta: afeta apenas o ativo especificado
             Q[i] = view_val     # Retorno anualizado da view
             conf = confidences.get(asset, 0.5) if confidences else 0.5
             omega_diag.append((P[i] @ (tau * cov) @ P[i].T) / conf)
@@ -226,8 +226,8 @@ def efficient_frontier_parametric(mu, cov_mat, rf, n_points=200):
     Problema de Markowitz original — para cada retorno-alvo μ* ∈ [μ_min, μ_max]:
         min   w' Σ w          (minimiza variância)
         s.t.  w' μ = μ* (atinge o retorno-alvo)
-              Σw_i = 1         (fully invested)
-              w_i ≥ 0          (long-only)
+              Σw_i = 1          (fully invested)
+              w_i ≥ 0           (long-only)
               w_i ≤ 0.5        (concentração máxima)
 
     Vantagem sobre Monte Carlo: a fronteira resultante é matematicamente ótima —
@@ -334,7 +334,7 @@ def safe_optimize(obj_fn, n_assets, label=""):
     Estratégia:
     1. Tentativa 1: SLSQP a partir de equally-weighted (w0 = 1/N)
     2. Se falhar: 10 reinicializações via Dirichlet(1,...,1) — amostra uniforme no simplex
-       Aceita a melhor solução encontrada (convergida ou menor valor de função objetivo).
+        Aceita a melhor solução encontrada (convergida ou menor valor de função objetivo).
 
     Retorna: (resultado_scipy, booleano_convergiu)
     """
@@ -552,7 +552,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
         # Verifica cobertura efetiva após remoção de linhas com NaN
         prices_full = prices_raw.dropna()
         total_requested = (date.today() - s_date).days   # Dias totais solicitados
-        total_effective = len(prices_full)                 # Pregões efetivos disponíveis
+        total_effective = len(prices_full)                  # Pregões efetivos disponíveis
         coverage_ratio = total_effective / max(total_requested, 1)
 
         if coverage_ratio < 0.50:
@@ -578,7 +578,7 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             st.stop()
 
         bench_rets = bench_prices.pct_change().dropna()  # Retornos diários do benchmark
-        rets = asset_prices.pct_change().dropna()          # Retornos diários dos ativos
+        rets = asset_prices.pct_change().dropna()           # Retornos diários dos ativos
 
         # --- Estimadores robustos (estáticos, para análise ex-ante) ---
         lw = LedoitWolf().fit(rets)
@@ -647,11 +647,11 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
 
         # Métricas de performance anualizadas
         ann_ret = rolling.mean() * 252                                     # Retorno médio anualizado
-        ann_vol = rolling.std() * np.sqrt(252)                             # Volatilidade anualizada
+        ann_vol = rolling.std() * np.sqrt(252)                               # Volatilidade anualizada
         sharpe  = (ann_ret - rf_rate) / ann_vol                            # Sharpe ratio realizado
         tracking_error = np.std(rolling - bench_aligned) * np.sqrt(252)   # TE anualizado
         info_ratio = (ann_ret - bench_aligned.mean() * 252) / (tracking_error + 1e-9)  # IR (evita div/0)
-        cum    = (1 + rolling).cumprod()                                   # Equity curve acumulada
+        cum    = (1 + rolling).cumprod()                                    # Equity curve acumulada
         max_dd = ((cum / cum.cummax()) - 1).min()                          # Max Drawdown (pico-a-vale)
         calmar = ann_ret / abs(max_dd) if abs(max_dd) > 0 else np.nan     # Calmar = retorno / |MDD|
 
@@ -758,7 +758,8 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
             "Risk budgeting: equaliza a contribuição marginal de risco de cada ativo. Mais robusto que MVO clássico; recomendado para mandatos multi-asset com convicções simétricas.",
         ]
 
-        for tab, opt, guia in zip(tabs, [opt_s, opt_v, opt_rp], mandatos):
+        # CORREÇÃO UNICA E EXCLUSIVA AQUI: Adição de 'enumerate' e 'key' no plotly_chart
+        for i, (tab, opt, guia) in enumerate(zip(tabs, [opt_s, opt_v, opt_rp], mandatos)):
             with tab:
                 w  = opt.x
                 r, v, s = calculate_stats(w, mu_bl, cov_robust, rf_rate)
@@ -799,7 +800,8 @@ if st.button("🚀 GERAR RELATÓRIO QUANTITATIVO COMPLETO"):
                         legend=dict(orientation="h", y=-0.25),
                         yaxis_title="%", margin=dict(t=40, b=60)
                     )
-                    st.plotly_chart(fig_rc, use_container_width=True)
+                    # Adição do parâmetro 'key' para evitar IDs duplicados
+                    st.plotly_chart(fig_rc, use_container_width=True, key=f"allocation_chart_{i}")
 
                 st.info(
                     f"📐 **Estatísticas ex-ante (Black-Litterman):** "
