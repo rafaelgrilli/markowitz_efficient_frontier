@@ -373,7 +373,7 @@ c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
 with c1:
     tickers_in = st.text_input(
         "Universo de Ativos:",
-        "VALE3.SA, ITUB4.SA, AAPL, MSFT, BTC-USD",
+        "VALE3.SA, ITSA4.SA, BBAS3.SA, GOAU4.SA, CSAN3.SA",
         help=(
             "Tickers via Yahoo Finance. "
             "Brasil: sufixo .SA (ex: PETR4.SA) | "
