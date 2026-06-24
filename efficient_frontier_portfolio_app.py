@@ -119,19 +119,25 @@ def black_litterman_full(mu_prior, cov, views_dict, confidences=None, tau=0.05):
     if not views_dict:
         return mu_prior, cov  # Sem views: retorna prior de mercado puro (CAPM reverso)
 
-    # Construção de P (picking matrix) e Q (vetor de views)
-    P = np.zeros((len(views_dict), n))
-    Q = np.zeros(len(views_dict))
     assets = list(mu_prior.index)
+    
+    # CORREÇÃO: Filtra as views para manter apenas os ativos que realmente estão presentes no prior
+    valid_views = {k: v for k, v in views_dict.items() if k in assets}
+    
+    if not valid_views:
+        return mu_prior, cov  # Sem views válidas restantes: retorna prior de mercado puro
+
+    # Construção de P (picking matrix) e Q (vetor de views) baseados apenas nas views válidas
+    P = np.zeros((len(valid_views), n))
+    Q = np.zeros(len(valid_views))
     omega_diag = []
 
-    for i, (asset, view_val) in enumerate(views_dict.items()):
-        if asset in assets:
-            idx = assets.index(asset)
-            P[i, idx] = 1        # View absoluta: afeta apenas o ativo especificado
-            Q[i] = view_val     # Retorno anualizado da view
-            conf = confidences.get(asset, 0.5) if confidences else 0.5
-            omega_diag.append((P[i] @ (tau * cov) @ P[i].T) / conf)
+    for i, (asset, view_val) in enumerate(valid_views.items()):
+        idx = assets.index(asset)
+        P[i, idx] = 1        # View absoluta: afeta apenas o ativo especificado
+        Q[i] = view_val     # Retorno anualizado da view
+        conf = confidences.get(asset, 0.5) if confidences else 0.5
+        omega_diag.append((P[i] @ (tau * cov) @ P[i].T) / conf)
 
     omega = np.diag(omega_diag)
 
